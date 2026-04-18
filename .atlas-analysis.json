@@ -1,0 +1,133 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "DeepChem",
+  "projectDescription": "An open-source Python library that democratizes deep learning for drug discovery, quantum chemistry, materials science, and biology.",
+  "theme": "palm",
+  "primaryColor": "#ec5642",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/datasets",
+              "concepts/featurizers",
+              "concepts/models",
+              "concepts/splitters",
+              "concepts/transformers"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/drug-discovery",
+              "guides/materials-science",
+              "guides/quantum-chemistry",
+              "guides/molecular-generation"
+            ]
+          },
+          {
+            "group": "MoleculeNet",
+            "pages": [
+              "moleculenet/overview",
+              "moleculenet/datasets"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Data",
+            "pages": [
+              "api/data/datasets",
+              "api/data/loaders"
+            ]
+          },
+          {
+            "group": "Featurizers",
+            "pages": [
+              "api/feat/molecular",
+              "api/feat/material",
+              "api/feat/complex"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "api/models/overview",
+              "api/models/graph-neural-networks",
+              "api/models/transformers",
+              "api/models/generative"
+            ]
+          },
+          {
+            "group": "Training & Evaluation",
+            "pages": [
+              "api/metrics",
+              "api/splitters",
+              "api/hyperparameter-tuning"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Unified API for drug discovery, quantum chemistry, materials science, and biology",
+    "Extensive model zoo with 60+ deep learning architectures (GCN, GAT, MPNN, AttentiveFP, Chemberta, etc.)",
+    "Rich featurizer library supporting molecular fingerprints, graph representations, and 3D coordinates",
+    "MoleculeNet benchmark suite with 40+ curated datasets",
+    "Support for PyTorch, TensorFlow/Keras, JAX, and scikit-learn backends",
+    "Chemically-aware data splitting strategies (scaffold, butina, fingerprint, etc.)",
+    "Molecular docking and protein-ligand interaction modeling",
+    "Reinforcement learning for molecular optimization",
+    "Distributed training via PyTorch Lightning"
+  ],
+  "publicApiSurface": [
+    "dc.data.NumpyDataset",
+    "dc.data.DiskDataset",
+    "dc.data.CSVLoader",
+    "dc.data.SDFLoader",
+    "dc.feat.MolGraphConvFeaturizer",
+    "dc.feat.CircularFingerprint",
+    "dc.feat.RDKitDescriptors",
+    "dc.feat.CoulombMatrix",
+    "dc.models.GCNModel",
+    "dc.models.GATModel",
+    "dc.models.AttentiveFPModel",
+    "dc.models.MPNNModel",
+    "dc.models.DMPNNModel",
+    "dc.models.ChemBERTa",
+    "dc.models.MoLFormer",
+    "dc.models.TorchModel",
+    "dc.models.SklearnModel",
+    "dc.splits.ScaffoldSplitter",
+    "dc.splits.RandomSplitter",
+    "dc.splits.ButinaSplitter",
+    "dc.metrics.Metric",
+    "dc.metrics.roc_auc_score",
+    "dc.metrics.pearsonr",
+    "dc.molnet.load_tox21",
+    "dc.molnet.load_bace_classification",
+    "dc.molnet.load_qm9",
+    "dc.trans.NormalizationTransformer",
+    "dc.trans.BalancingTransformer",
+    "dc.hyper.GridHyperparamOpt",
+    "dc.rl.PPO",
+    "dc.dock.VinaGridFeaturizer"
+  ]
+}

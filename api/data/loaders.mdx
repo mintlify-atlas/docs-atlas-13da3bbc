@@ -1,0 +1,385 @@
+---
+title: "Data Loaders — dc.data loaders"
+description: "Reference for DeepChem's DataLoader, CSVLoader, SDFLoader, FASTALoader, and other data loading classes with constructor parameters."
+---
+
+The data loader classes in `dc.data` bridge raw input files (CSV, SDF, FASTA, JSON, images, and genomic alignment formats) and DeepChem's `Dataset` abstraction. Each loader pairs a `Featurizer` with file-format-specific parsing logic to produce a `DiskDataset` that can be passed directly to models and transformers. For data that is already in memory, `InMemoryLoader` provides the same featurize-and-checkpoint workflow without requiring files on disk.
+
+---
+
+## DataLoader
+
+`DataLoader` is the abstract base class. Never instantiate it directly; use one of the concrete subclasses described below.
+
+### Constructor
+
+```python
+dc.data.DataLoader(tasks, featurizer, id_field=None, log_every_n=1000)
+```
+
+<ParamField path="tasks" type="List[str]" required>
+  List of task names. Each name must correspond to a column in the source data that holds the label for that task.
+</ParamField>
+
+<ParamField path="featurizer" type="Featurizer" required>
+  A `dc.feat.Featurizer` instance that converts raw input (e.g., a SMILES string) into a numeric feature array.
+</ParamField>
+
+<ParamField path="id_field" type="string" default="None">
+  Name of the field (column, property, etc.) that uniquely identifies each sample. The meaning of "field" depends on the subclass and the source format.
+</ParamField>
+
+<ParamField path="log_every_n" type="integer" default="1000">
+  Emit a progress log line after every `log_every_n` samples have been featurized.
+</ParamField>
+
+### `create_dataset(inputs, data_dir=None, shard_size=8192)`
+
+The primary method for all `DataLoader` subclasses. Reads `inputs`, featurizes the data, and returns a `DiskDataset`.
+
+<ParamField path="inputs" type="List" required>
+  A list of inputs to process. Entries are typically filenames, but some subclasses (e.g., `InMemoryLoader`) accept arbitrary objects.
+</ParamField>
+
+<ParamField path="data_dir" type="string" default="None">
+  Directory in which to store the featurized dataset shards. A temporary directory is used when `None`.
+</ParamField>
+
+<ParamField path="shard_size" type="integer" default="8192">
+  Number of samples written to each shard file. Larger values reduce file-system overhead; smaller values reduce peak memory usage.
+</ParamField>
+
+---
+
+## CSVLoader
+
+`CSVLoader` reads comma-separated-value files and featurizes a designated column to produce a `DiskDataset`. Rows for which featurization fails are silently dropped.
+
+### Constructor
+
+```python
+dc.data.CSVLoader(tasks, featurizer, feature_field=None, id_field=None,
+                  smiles_field=None, log_every_n=1000)
+```
+
+<ParamField path="tasks" type="List[str]" required>
+  Column names in the CSV that hold the task labels.
+</ParamField>
+
+<ParamField path="featurizer" type="Featurizer" required>
+  Featurizer applied to each value in `feature_field`.
+</ParamField>
+
+<ParamField path="feature_field" type="string" default="None">
+  Name of the CSV column whose values will be featurized (e.g., `"smiles"` for molecular data).
+</ParamField>
+
+<ParamField path="id_field" type="string" default="None">
+  CSV column used as the sample identifier. When `None`, the values in `feature_field` are used as identifiers.
+</ParamField>
+
+<ParamField path="smiles_field" type="string" default="None" deprecated>
+  Deprecated alias for `feature_field`. Will be removed in DeepChem 3.0. Use `feature_field` instead.
+</ParamField>
+
+<ParamField path="log_every_n" type="integer" default="1000">
+  Log a progress statement after this many samples.
+</ParamField>
+
+### Code example
+
+```python
+import pandas as pd
+import deepchem as dc
+from deepchem.utils import UniversalNamedTemporaryFile
+
+smiles = ["C", "CCC"]
+labels = [1.5, 2.3]
+df = pd.DataFrame({"smiles": smiles, "task1": labels})
+
+with UniversalNamedTemporaryFile(mode="w") as tmpfile:
+    df.to_csv(tmpfile.name)
+    loader = dc.data.CSVLoader(
+        tasks=["task1"],
+        feature_field="smiles",
+        featurizer=dc.feat.CircularFingerprint(),
+    )
+    dataset = loader.create_dataset(tmpfile.name)
+
+print(len(dataset))       # 2
+print(dataset.X.shape)    # (2, 2048)
+```
+
+<Tip>
+  If your data is already in memory rather than in a file, use `InMemoryLoader` instead of writing it to a temporary CSV first.
+</Tip>
+
+---
+
+## SDFLoader
+
+`SDFLoader` reads Structure Data Files (SDF), a standard cheminformatics format that stores 3-D atomic coordinates and bonds alongside molecular properties. Task labels are read from SDF property fields.
+
+### Constructor
+
+```python
+dc.data.SDFLoader(tasks, featurizer, sanitize=False, log_every_n=1000)
+```
+
+<ParamField path="tasks" type="List[str]" required>
+  Names of SDF property fields to use as task labels.
+</ParamField>
+
+<ParamField path="featurizer" type="Featurizer" required>
+  Featurizer to apply to each RDKit `Mol` object parsed from the SDF file.
+</ParamField>
+
+<ParamField path="sanitize" type="boolean" default="false">
+  If `True`, RDKit sanitization is applied to each molecule before featurization.
+</ParamField>
+
+<ParamField path="log_every_n" type="integer" default="1000">
+  Log a progress statement after this many samples.
+</ParamField>
+
+### Usage
+
+```python
+import deepchem as dc
+
+featurizer = dc.feat.CircularFingerprint(size=16)
+loader = dc.data.SDFLoader(tasks=["LogP(RRCK)"], featurizer=featurizer, sanitize=True)
+dataset = loader.create_dataset("molecules.sdf")
+```
+
+`create_dataset` also accepts `.zip` archives containing `.sdf` files.
+
+---
+
+## JsonLoader
+
+`JsonLoader` reads JSON files formatted as newline-delimited records (the `orient="records", lines=True` format produced by `pandas.DataFrame.to_json`).
+
+### Constructor
+
+```python
+dc.data.JsonLoader(tasks, feature_field, featurizer, label_field=None,
+                   weight_field=None, id_field=None, log_every_n=1000)
+```
+
+<ParamField path="tasks" type="List[str]" required>
+  Task names to load from the JSON records.
+</ParamField>
+
+<ParamField path="feature_field" type="string" required>
+  JSON field whose value will be featurized.
+</ParamField>
+
+<ParamField path="featurizer" type="Featurizer" required>
+  Featurizer to apply to each value in `feature_field`.
+</ParamField>
+
+<ParamField path="label_field" type="string" default="None">
+  JSON field containing the label. When `None`, labels are inferred from `tasks` columns.
+</ParamField>
+
+<ParamField path="weight_field" type="string" default="None">
+  JSON field containing per-sample weights.
+</ParamField>
+
+<ParamField path="id_field" type="string" default="None">
+  JSON field used as the sample identifier.
+</ParamField>
+
+<ParamField path="log_every_n" type="integer" default="1000">
+  Log a progress statement after this many samples.
+</ParamField>
+
+---
+
+## FASTALoader
+
+`FASTALoader` handles FASTA files, a common format for biological sequence data such as DNA and protein sequences. By default, sequences are one-hot encoded using the charset `("A", "C", "T", "G")`.
+
+### Constructor
+
+```python
+dc.data.FASTALoader(featurizer=None, auto_add_annotations=False,
+                    legacy=True, use_raw_fasta=False)
+```
+
+<ParamField path="featurizer" type="Featurizer" default="None">
+  Featurizer for the sequences. When `None` and `legacy=False`, a `OneHotFeaturizer` with charset `("A", "C", "T", "G")` and `max_length=None` is used automatically.
+</ParamField>
+
+<ParamField path="auto_add_annotations" type="boolean" default="false">
+  If `True`, `[CLS]` and `[SEP]` tokens are prepended and appended to each sequence to assist tokenization models. Set to `False` if your FASTA file already contains these annotations.
+</ParamField>
+
+<ParamField path="legacy" type="boolean" default="true" deprecated>
+  When `True`, uses the original one-hot encoding logic that produces arrays of shape `(n_sequences, n_channels + 1, max_length, 1)`. Deprecated; will be removed in DeepChem 3.0. Pass `legacy=False` for new code.
+</ParamField>
+
+<ParamField path="use_raw_fasta" type="boolean" default="false">
+  If `True`, uses `FASTAFeaturizer` (backed by pysam) to extract raw sequences with their header names. Returns arrays of shape `(n_sequences, 2)` where each row is `[sequence_name, sequence]`. Requires pysam.
+</ParamField>
+
+<Warning>
+  Legacy mode is deprecated and will be removed in DeepChem 3.0. New code should pass `legacy=False`.
+</Warning>
+
+---
+
+## FASTQLoader
+
+`FASTQLoader` handles FASTQ files, a variant of the FASTA format that also stores per-base quality scores. It is designed for large next-generation sequencing datasets.
+
+### Constructor
+
+```python
+dc.data.FASTQLoader(featurizer=None, auto_add_annotations=False,
+                    return_quality_scores=False)
+```
+
+<ParamField path="featurizer" type="Featurizer" default="None">
+  Featurizer for the sequences. When `None`, a `OneHotFeaturizer` with charset `("A", "C", "T", "G")` and `max_length=None` is used.
+</ParamField>
+
+<ParamField path="auto_add_annotations" type="boolean" default="false">
+  If `True`, `[CLS]` and `[SEP]` tokens are added to each sequence.
+</ParamField>
+
+<ParamField path="return_quality_scores" type="boolean" default="false">
+  If `True`, quality score strings from the fourth line of each FASTQ record are returned as the weight array `w`.
+</ParamField>
+
+---
+
+## InMemoryLoader
+
+`InMemoryLoader` featurizes data that is already in memory (e.g., a list of SMILES strings) and checkpoints the resulting features to disk in shards, avoiding out-of-memory errors for large featurized arrays.
+
+`InMemoryLoader` inherits its constructor from `DataLoader`:
+
+```python
+dc.data.InMemoryLoader(tasks, featurizer, id_field=None, log_every_n=1000)
+```
+
+### `create_dataset(inputs, data_dir=None, shard_size=8192)`
+
+<ParamField path="inputs" type="Sequence[Any]" required>
+  A sequence where each element is one of:
+  - A single featurization input (e.g., a SMILES string), or
+  - A tuple `(featurization_input, label)`, `(featurization_input, label, weight)`, or `(featurization_input, label, weight, id)`.
+</ParamField>
+
+<ParamField path="data_dir" type="string" default="None">
+  Directory to store the featurized shards. A temporary directory is used when `None`.
+</ParamField>
+
+<ParamField path="shard_size" type="integer" default="8192">
+  Number of samples per shard.
+</ParamField>
+
+```python
+import deepchem as dc
+
+smiles = ["C", "CC", "CCC", "CCCC"]
+labels = [1, 0, 1, 0]
+featurizer = dc.feat.CircularFingerprint()
+loader = dc.data.InMemoryLoader(tasks=["task1"], featurizer=featurizer)
+dataset = loader.create_dataset(zip(smiles, labels), shard_size=2)
+print(len(dataset))  # 4
+```
+
+---
+
+## SAMLoader / BAMLoader / CRAMLoader
+
+These loaders handle genomic sequence alignment file formats:
+
+- **SAMLoader** — Sequence Alignment Map (`.sam`), a text-based format.
+- **BAMLoader** — Binary Alignment Map (`.bam`), the compressed binary equivalent of SAM.
+- **CRAMLoader** — Compressed Reference-oriented Alignment Map (`.cram`), a more compact alternative to BAM.
+
+All three extract per-read fields including query name, query sequence, query length, reference name, reference start position, CIGAR string, and mapping quality.
+
+<Warning>
+  These classes require `pysam` to be installed. `pysam` is supported on Linux and macOS only. On Windows, use Windows Subsystem for Linux (WSL). If `pysam` is not available, importing `dc.data` will log a warning and these classes will not be available.
+</Warning>
+
+### SAMLoader constructor
+
+```python
+dc.data.SAMLoader(featurizer=None)
+```
+
+<ParamField path="featurizer" type="Featurizer" default="None">
+  Featurizer for the alignment records. When `None`, a `SAMFeaturizer` is used automatically.
+</ParamField>
+
+### BAMLoader constructor
+
+```python
+dc.data.BAMLoader(featurizer=None, get_pileup=False)
+```
+
+<ParamField path="featurizer" type="Featurizer" default="None">
+  Featurizer for the alignment records. When `None`, a `BAMFeaturizer` with `max_records=None` is used.
+</ParamField>
+
+<ParamField path="get_pileup" type="boolean" default="false">
+  If `True`, returns pileup data (per-position read coverage) suitable for variant calling workflows such as DeepVariant.
+</ParamField>
+
+### CRAMLoader constructor
+
+```python
+dc.data.CRAMLoader(featurizer=None)
+```
+
+<ParamField path="featurizer" type="Featurizer" default="None">
+  Featurizer for the alignment records. When `None`, a `CRAMFeaturizer` with `max_records=None` is used.
+</ParamField>
+
+### Usage
+
+```python
+from deepchem.data.data_loader import SAMLoader
+
+loader = SAMLoader()
+dataset = loader.create_dataset("example.sam")
+```
+
+---
+
+## End-to-end example: CSVLoader with SMILES
+
+The following example shows a complete workflow — creating a CSV in memory, writing it to a temporary file, loading it with `CSVLoader`, and inspecting the resulting dataset.
+
+```python
+import pandas as pd
+import deepchem as dc
+from deepchem.utils import UniversalNamedTemporaryFile
+
+# Prepare data
+smiles = ["C", "CC", "CCC", "CCCC", "CCCCC"]
+labels = [1.0, 0.0, 1.0, 0.0, 1.0]
+df = pd.DataFrame({"smiles": smiles, "activity": labels})
+
+# Featurize and load
+with UniversalNamedTemporaryFile(mode="w") as tmpfile:
+    df.to_csv(tmpfile.name, index=False)
+    loader = dc.data.CSVLoader(
+        tasks=["activity"],
+        feature_field="smiles",
+        featurizer=dc.feat.CircularFingerprint(size=1024),
+    )
+    dataset = loader.create_dataset(tmpfile.name)
+
+print(f"Samples: {len(dataset)}")        # 5
+print(f"Feature shape: {dataset.X.shape}")  # (5, 1024)
+print(f"Label shape: {dataset.y.shape}")    # (5, 1)
+```
+
+For datasets that do not require files on disk, replace `CSVLoader` with `InMemoryLoader` and pass a list of `(smiles, label)` tuples directly.

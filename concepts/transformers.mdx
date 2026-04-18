@@ -1,0 +1,204 @@
+---
+title: "Data Transformers for Preprocessing in DeepChem"
+description: "DeepChem transformers normalize features and labels, handle class imbalance, and augment data for improved model training performance."
+---
+
+Transformers preprocess datasets before training by applying mathematical operations to features `X`, labels `y`, or sample weights `w`. Common operations include standardization, scaling, clipping, and class-weight balancing. Because transformers know how to reverse their own operations, predictions made on transformed data can be converted back to the original scale for reporting.
+
+## How transformers work
+
+Every transformer in DeepChem inherits from `dc.trans.Transformer`. The key methods are:
+
+```python
+class Transformer:
+    def __init__(
+        self,
+        transform_X: bool = False,
+        transform_y: bool = False,
+        transform_w: bool = False,
+        transform_ids: bool = False,
+        dataset: Optional[Dataset] = None,
+    ): ...
+
+    def transform(self, dataset: Dataset, parallel: bool = False,
+                  out_dir: Optional[str] = None, **kwargs) -> Dataset: ...
+
+    def transform_array(
+        self, X: np.ndarray, y: np.ndarray, w: np.ndarray, ids: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ...
+
+    def untransform(self, transformed: np.ndarray) -> np.ndarray: ...
+```
+
+`transform()` returns a **new** dataset object; the original is not modified in place. Statistics required for the transformation (e.g., mean and standard deviation) are computed from the `dataset` argument passed to the constructor.
+
+Transformers are designed to be chained. The helper function `dc.trans.undo_transforms(y, transformers)` reverses a list of transformers in reverse order, which is what `model.predict()` does automatically when you pass `transformers` to it.
+
+## Key transformers
+
+### NormalizationTransformer
+
+Normalizes features or labels to zero mean and unit standard deviation. Statistics are computed from the dataset passed to the constructor. Can only transform `X` or `y`, not both simultaneously.
+
+```python
+dc.trans.NormalizationTransformer(
+    transform_X: bool = False,
+    transform_y: bool = False,
+    transform_w: bool = False,
+    dataset: Optional[Dataset] = None,
+    transform_gradients: bool = False,
+    move_mean: bool = True,
+)
+```
+
+```python
+import numpy as np
+import deepchem as dc
+
+X = np.random.rand(100, 10)
+y = np.random.rand(100, 1) * 50  # labels in range [0, 50]
+dataset = dc.data.NumpyDataset(X, y)
+
+transformer = dc.trans.NormalizationTransformer(transform_y=True, dataset=dataset)
+transformed = transformer.transform(dataset)
+
+print(transformed.y.mean())   # near 0
+print(transformed.y.std())    # near 1
+```
+
+### MinMaxTransformer
+
+Scales each feature or label axis to the interval `[0, 1]` using the per-axis minimum and maximum observed in the dataset passed to the constructor.
+
+```python
+dc.trans.MinMaxTransformer(
+    transform_X: bool = False,
+    transform_y: bool = False,
+    dataset: Optional[Dataset] = None,
+)
+```
+
+<Note>
+`MinMaxTransformer` can only transform `X` or `y`, not both. Attempting to set both `transform_X=True` and `transform_y=True` raises a `ValueError`.
+</Note>
+
+### BalancingTransformer
+
+Adjusts sample weights `w` so that each class contributes equally to the training loss, which helps counteract class imbalance. The transformer modifies `w` rather than `X` or `y`, so no `untransform()` step is needed for predictions.
+
+```python
+dc.trans.BalancingTransformer(dataset: Dataset)
+```
+
+```python
+import numpy as np
+import deepchem as dc
+
+# Imbalanced binary classification: 90 negatives, 10 positives
+n_samples = 100
+X = np.random.rand(n_samples, 20)
+y = np.zeros((n_samples, 1))
+y[:10] = 1.0   # 10% positive class
+w = np.ones((n_samples, 1))
+dataset = dc.data.NumpyDataset(X, y, w)
+
+transformer = dc.trans.BalancingTransformer(dataset=dataset)
+balanced = transformer.transform(dataset)
+# Weights for positive examples are now 9x larger than for negatives
+```
+
+### PowerTransformer
+
+Computes polynomial expansions of features or labels by raising them to a list of specified powers. For example, `powers=[1, 2, 0.5]` concatenates the identity, squared, and square root of each feature, tripling the feature dimensionality.
+
+```python
+dc.trans.PowerTransformer(
+    transform_X: bool = False,
+    transform_y: bool = False,
+    dataset: Optional[Dataset] = None,
+    powers: List[int] = [1],
+)
+```
+
+### FlatteningTransformer
+
+Used as a preprocessing step for atom-contribution model interpretation. It takes a dataset where each sample's `X` is a list of per-atom fragment features and flattens it so that each fragment becomes an independent row, with its parent molecule's label and weight broadcast to all its fragments.
+
+```python
+dc.trans.FlatteningTransformer(dataset: Dataset)
+```
+
+### IRVTransformer
+
+Converts ECFP fingerprint features into IRV (Influence Relevance Voter) features by finding the `K` nearest neighbours in the training set for each query molecule. Required as a preprocessing step before using `MultitaskIRVClassifier`.
+
+```python
+dc.trans.IRVTransformer(
+    K: int,         # number of nearest neighbours
+    n_tasks: int,   # number of tasks
+    dataset: Dataset,  # training dataset used as the reference
+)
+```
+
+```python
+K = 10
+n_tasks = 2
+trans = dc.trans.IRVTransformer(K, n_tasks, train_dataset)
+train_transformed = trans.transform(train_dataset)
+```
+
+## Applying transformers in a MoleculeNet pipeline
+
+MoleculeNet load functions return `(tasks, datasets, transformers)` tuples. The transformers have already been fit on the training split and applied to all three splits. Pass the same transformer list to `evaluate()` and `predict()` so that DeepChem can undo the label transformation when computing metrics.
+
+```python
+import deepchem as dc
+
+tasks, datasets, transformers = dc.molnet.load_delaney(featurizer="GraphConv")
+train_dataset, valid_dataset, test_dataset = datasets
+
+model = dc.models.GCNModel(n_tasks=len(tasks), mode='regression')
+model.fit(train_dataset, nb_epoch=50)
+
+# Pass transformers so labels are untransformed before metric computation
+metric = dc.metrics.Metric(dc.metrics.pearson_r2_score)
+scores = model.evaluate(test_dataset, [metric], transformers=transformers)
+print(scores)
+```
+
+## Untransforming predictions
+
+When you call `model.predict(dataset, transformers=transformers)`, DeepChem calls `dc.trans.undo_transforms(y_pred, transformers)` automatically. You can also call this function manually:
+
+```python
+from deepchem.trans import undo_transforms
+
+raw_predictions = model.predict(test_dataset)
+original_scale_predictions = undo_transforms(raw_predictions, transformers)
+```
+
+<Warning>
+Always pass the same `transformers` list that was used during training to both `evaluate()` and `predict()`. Omitting the transformers when labels were normalized will result in metrics computed on the wrong scale, producing misleadingly poor results.
+</Warning>
+
+## Composing multiple transformers
+
+Transformers can be chained sequentially. Apply them in order to the dataset, and pass the full list to the model:
+
+```python
+norm_transformer = dc.trans.NormalizationTransformer(transform_X=True, dataset=train)
+train = norm_transformer.transform(train)
+test = norm_transformer.transform(test)
+
+clip_transformer = dc.trans.ClippingTransformer(transform_X=True, x_max=5.0)
+train = clip_transformer.transform(train)
+test = clip_transformer.transform(test)
+
+transformers = [norm_transformer, clip_transformer]
+model.fit(train)
+scores = model.evaluate(test, [metric], transformers=transformers)
+```
+
+<Tip>
+`NormalizationTransformer` and `MinMaxTransformer` are the most common choices for regression tasks. For classification, `BalancingTransformer` is often critical when positive/negative ratios are far from 1:1.
+</Tip>

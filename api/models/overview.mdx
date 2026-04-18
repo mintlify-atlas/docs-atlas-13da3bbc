@@ -1,0 +1,124 @@
+---
+title: "Models Overview — dc.models"
+description: "Overview of DeepChem's 60+ model architectures for molecular property prediction, generation, and quantum chemistry with usage examples."
+---
+
+The `dc.models` module is the core of DeepChem's machine learning functionality. It provides over 60 model architectures spanning graph neural networks, transformers, generative models, scikit-learn wrappers, and quantum chemistry methods. All models share a common training and inference API built on top of the abstract `Model` base class, making it straightforward to swap architectures while keeping the same data pipeline.
+
+## Base `Model` class
+
+Every DeepChem model inherits from `deepchem.models.Model`. The base class defines the shared interface for training, prediction, evaluation, and persistence.
+
+### Constructor parameters
+
+<ParamField path="model_dir" type="string">
+  Path to the directory where checkpoints and model parameters will be saved. If `None`, a temporary directory is created automatically and cleaned up when the model object is deleted.
+</ParamField>
+
+<ParamField path="n_tasks" type="number" required>
+  Number of prediction tasks. Set to `1` for single-task models and to the number of outputs for multitask models.
+</ParamField>
+
+<ParamField path="mode" type="string" default="regression">
+  Learning objective. Accepts `'regression'` or `'classification'`. Controls the loss function and output activation used by most model subclasses.
+</ParamField>
+
+### Key methods
+
+| Method | Description |
+|---|---|
+| `fit(dataset, nb_epoch)` | Train the model on a `dc.data.Dataset` object. |
+| `predict(dataset, transformers)` | Run inference and return a NumPy array of predictions. |
+| `evaluate(dataset, metrics, transformers)` | Compute metrics and return a dict of results. |
+| `save()` | Serialize model weights and parameters to `model_dir`. |
+| `load_from_pretrained(source_model)` | Load pretrained weights from another model directory. |
+| `get_params()` | Return a dict of constructor parameters for reproducibility. |
+
+```python
+import deepchem as dc
+
+# Load a built-in dataset
+tasks, datasets, transformers = dc.molnet.load_tox21()
+train_dataset, valid_dataset, test_dataset = datasets
+
+# Instantiate and train a model
+model = dc.models.GCNModel(n_tasks=len(tasks), mode='classification',
+                            model_dir='./gcn_checkpoints')
+loss = model.fit(train_dataset, nb_epoch=30)
+
+# Evaluate
+metric = dc.metrics.Metric(dc.metrics.roc_auc_score, np.mean)
+results = model.evaluate(test_dataset, [metric], transformers)
+
+# Save and reload
+model.save()
+reloaded = dc.models.GCNModel(n_tasks=len(tasks), mode='classification',
+                               model_dir='./gcn_checkpoints')
+reloaded.reload()
+```
+
+<Note>
+  When `model_dir` is not set, DeepChem writes checkpoints to a system temporary directory that is deleted when the Python object is garbage-collected. Always set `model_dir` explicitly when you need to resume training or load a checkpoint later.
+</Note>
+
+## Model categories
+
+<Columns cols={2}>
+  <Card title="Graph Neural Networks" icon="circle-nodes">
+    Operate directly on molecular graphs. Includes GCNModel, GATModel, AttentiveFPModel, DMPNNModel, WeaveModel, and MPNNModel. Require graph-based featurizers such as `MolGraphConvFeaturizer`.
+  </Card>
+  <Card title="Transformers" icon="brain">
+    Sequence and graph transformer architectures pretrained on large molecular corpora. Includes Chemberta, MoLFormer, Grover, and MAT. Accept raw SMILES strings or specialized molecular features.
+  </Card>
+  <Card title="Materials models" icon="atom">
+    Designed for periodic crystal structures and surface properties. Includes CGCNNModel (Crystal Graph CNN), MEGNetModel, and LCNNModel. Require crystal-structure featurizers.
+  </Card>
+  <Card title="Generative models" icon="wand-magic-sparkles">
+    De novo molecule design. Includes BasicMolGANModel (graph GAN), GAN/WGAN (base classes), and SeqToSeq (SMILES encoder-decoder). Some models require TensorFlow.
+  </Card>
+  <Card title="Sklearn / GBDT wrappers" icon="table">
+    Thin wrappers that expose scikit-learn estimators and gradient boosting models (XGBoost, LightGBM) through the DeepChem API. Use `SklearnModel` and `GBDTModel`.
+  </Card>
+  <Card title="Quantum chemistry" icon="flask">
+    Deep learning on quantum mechanical data. Includes DTNNModel (Deep Tensor Neural Network), FermiNet, and HNN (Hamiltonian Neural Network) for electronic structure and energy prediction.
+  </Card>
+</Columns>
+
+## Shared training workflow
+
+All models follow the same four-step workflow regardless of architecture:
+
+<Steps>
+  <Step title="Featurize molecules">
+    Convert SMILES strings or molecular objects into numerical features using a `dc.feat` featurizer compatible with the chosen model.
+  </Step>
+  <Step title="Create a Dataset">
+    Wrap features, labels, and optional sample weights in a `dc.data.NumpyDataset` or load from disk with a `dc.data.CSVLoader`.
+  </Step>
+  <Step title="Train the model">
+    Call `model.fit(dataset, nb_epoch=N)`. The method returns the final training loss value.
+  </Step>
+  <Step title="Evaluate and predict">
+    Call `model.evaluate(dataset, metrics, transformers)` for metric computation or `model.predict(dataset, transformers)` for raw predictions.
+  </Step>
+</Steps>
+
+```python
+import deepchem as dc
+
+smiles = ["C1CCC1", "CCC", "c1ccccc1"]
+labels = [1.2, 0.8, 2.4]
+
+featurizer = dc.feat.MolGraphConvFeaturizer()
+X = featurizer.featurize(smiles)
+dataset = dc.data.NumpyDataset(X=X, y=labels)
+
+model = dc.models.GCNModel(n_tasks=1, mode='regression',
+                            model_dir='./my_model')
+loss = model.fit(dataset, nb_epoch=50)
+predictions = model.predict(dataset)
+```
+
+<Tip>
+  Use `dc.molnet` loaders (for example, `dc.molnet.load_tox21()`) to quickly access benchmark datasets with pre-split train/valid/test sets and standard transformers already applied.
+</Tip>

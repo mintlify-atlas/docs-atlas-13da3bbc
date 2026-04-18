@@ -1,0 +1,151 @@
+---
+title: "Quantum Chemistry Modeling with DeepChem"
+description: "Predict quantum mechanical properties of molecules using DeepChem's QM9 datasets, Coulomb matrix featurizers, and DTNN/SchNet models."
+---
+
+DeepChem provides first-class support for quantum chemistry tasks: predicting energies, electronic structure properties, and thermodynamic quantities directly from molecular geometry. Using datasets like QM7 and QM9 alongside Coulomb matrix featurizers and deep tensor neural networks, you can train models that capture the physics of molecular interactions without running expensive DFT calculations at inference time.
+
+## Datasets
+
+### QM7
+
+QM7 is a subset of the GDB-13 database containing 7,165 organic molecules with up to 7 heavy atoms (C, N, O, S). It provides atomization energies computed at the PBE0/tier2 DFT level. The dataset is loaded with `dc.molnet.load_qm7()` and uses a `CoulombMatrix(23)` featurizer by default.
+
+```
+Tasks: ['u0_atom']   # Atomization energy at 0 K (kcal/mol)
+```
+
+### QM9
+
+QM9 is a larger benchmark containing ~134,000 stable organic molecules with up to 9 heavy atoms. All properties are computed with B3LYP/6-31G(2df,p) DFT. It is loaded with `dc.molnet.load_qm9()` and uses `CoulombMatrix(29)` by default.
+
+```
+Tasks (12 total):
+  mu      - Dipole moment (D)
+  alpha   - Isotropic polarizability (Bohr³)
+  homo    - HOMO energy (Hartree)
+  lumo    - LUMO energy (Hartree)
+  gap     - HOMO–LUMO gap (Hartree)
+  r2      - Electronic spatial extent (Bohr²)
+  zpve    - Zero-point vibrational energy (Hartree)
+  cv      - Heat capacity at 298.15 K (cal/mol·K)
+  u0      - Internal energy at 0 K (Hartree)
+  u298    - Internal energy at 298.15 K (Hartree)
+  h298    - Enthalpy at 298.15 K (Hartree)
+  g298    - Free energy at 298.15 K (Hartree)
+```
+
+<Note>
+  DeepChem 2.4.0+ enables RDKit sanitization by default. This reduces the QM9 dataset from 133,885 to 132,480 compounds due to valence specification mismatches in the source SDF file.
+</Note>
+
+## Featurizers
+
+<CardGroup cols={2}>
+  <Card title="CoulombMatrix" icon="table">
+    Encodes pairwise nuclear charge interactions: diagonal entries are `0.5 * Z²·⁴`, off-diagonal entries are `Z_i * Z_j / |R_i - R_j|`. The `max_atoms` parameter pads the matrix to a fixed size. Returns a 2D NumPy array.
+  </Card>
+  <Card title="CoulombMatrixEig" icon="wave-square">
+    Returns the sorted eigenspectrum of the Coulomb matrix as a 1D vector. Invariant to molecular rotation. Useful as input to models that expect fixed-length vectors rather than matrices.
+  </Card>
+  <Card title="BPSymmetryFunctionInput" icon="function">
+    Computes Behler–Parrinello atom-centered symmetry functions (radial G1/G2 and angular G3/G4). Designed for ANI-style atomistic neural network potentials that predict energy as a sum over atomic contributions.
+  </Card>
+</CardGroup>
+
+```python
+import deepchem as dc
+
+# CoulombMatrix for up to 29 heavy atoms (QM9 default)
+featurizer = dc.feat.CoulombMatrix(max_atoms=29)
+
+# CoulombMatrixEig — fixed-length eigenvalue vector
+featurizer_eig = dc.feat.CoulombMatrixEig(max_atoms=29)
+```
+
+## Key models
+
+<CardGroup cols={2}>
+  <Card title="DTNNModel" icon="atom">
+    Deep Tensor Neural Network. Takes distance matrix and atom membership derived from the Coulomb matrix. Iteratively refines per-atom representations by modeling pairwise interactions, then sums atomic energies for the molecular prediction.
+  </Card>
+  <Card title="HNN" icon="wave-square">
+    Hamiltonian Neural Network. Learns conservation laws by parameterizing a scalar Hamiltonian function and computing dynamics via Hamilton's equations. Useful for learning physically consistent energy surfaces.
+  </Card>
+  <Card title="FermiNet" icon="circle-half-stroke">
+    Neural network wavefunction that directly solves the electronic Schrödinger equation using variational Monte Carlo. Produces highly accurate ground-state energies without DFT. Computationally intensive.
+  </Card>
+</CardGroup>
+
+## Loading QM9 and training DTNNModel
+
+`DTNNModel` consumes the output of `batch_coulomb_matrix_features`, which extracts atom numbers, distances, and membership indices from a batch of Coulomb matrices.
+
+```python
+import deepchem as dc
+import numpy as np
+
+# 1. Load QM9 with CoulombMatrix featurizer
+featurizer = dc.feat.CoulombMatrix(max_atoms=29)
+tasks, datasets, transformers = dc.molnet.load_qm9(
+    featurizer=featurizer,
+    splitter='random',
+    transformers=['normalization'],
+)
+train_dataset, valid_dataset, test_dataset = datasets
+# Predict HOMO–LUMO gap only
+# tasks == ['mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'cv',
+#           'u0', 'u298', 'h298', 'g298']
+
+# 2. Train DTNNModel
+model = dc.models.DTNNModel(
+    n_tasks=len(tasks),
+    learning_rate=1e-3,
+    batch_size=64,
+)
+model.fit(train_dataset, nb_epoch=50)
+
+# 3. Evaluate
+metric = dc.metrics.Metric(dc.metrics.mean_absolute_error, np.mean)
+print("Test MAE:", model.evaluate(test_dataset, [metric], transformers))
+```
+
+### Loading QM7 for atomization energy prediction
+
+```python
+import deepchem as dc
+
+# QM7 default featurizer is CoulombMatrix(23)
+tasks, datasets, transformers = dc.molnet.load_qm7(
+    featurizer=dc.feat.CoulombMatrix(23),
+    splitter='random',
+    transformers=['normalization'],
+)
+train_dataset, valid_dataset, test_dataset = datasets
+# tasks == ['u0_atom']  — atomization energy in kcal/mol
+
+model = dc.models.DTNNModel(n_tasks=1, learning_rate=1e-3)
+model.fit(train_dataset, nb_epoch=50)
+```
+
+## Predicted properties summary
+
+| Property | Symbol | Unit | Dataset |
+|---|---|---|---|
+| Atomization energy (0 K) | `u0_atom` | kcal/mol | QM7, QM9 |
+| Dipole moment | `mu` | D | QM9 |
+| Polarizability | `alpha` | Bohr³ | QM9 |
+| HOMO energy | `homo` | Hartree | QM9 |
+| LUMO energy | `lumo` | Hartree | QM9 |
+| HOMO–LUMO gap | `gap` | Hartree | QM9 |
+| Zero-point vibrational energy | `zpve` | Hartree | QM9 |
+
+<Warning>
+  Running DFT-based calculations (e.g., using the `dqc` backend) requires the `dqc` extra:
+
+  ```bash
+  pip install deepchem[dqc]
+  ```
+
+  Standard property prediction with pre-computed QM7/QM9 labels does not require this extra.
+</Warning>

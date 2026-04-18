@@ -1,0 +1,187 @@
+---
+title: "Molecular Featurizers in DeepChem"
+description: "DeepChem featurizers convert molecules, crystal structures, and biological sequences into numerical representations suitable for deep learning model input."
+---
+
+Featurization is the bridge between chemistry and machine learning. Raw molecular structures — whether expressed as SMILES strings, RDKit `Mol` objects, or crystal structure files — must be converted into fixed-length numerical vectors or graph objects before any model can process them. DeepChem's featurizer library covers fingerprints, graph representations, quantum-chemistry matrices, material descriptors, and biological sequence encodings.
+
+## Base classes
+
+All featurizers inherit from `dc.feat.Featurizer`. The primary entry point is the `featurize()` method, which accepts an iterable of data points and returns a numpy array of feature representations. Subclasses implement `_featurize()` for a single data point.
+
+```python
+class Featurizer:
+    def featurize(self, datapoints: Iterable[Any], log_every_n: int = 1000) -> np.ndarray: ...
+    def _featurize(self, datapoint: Any, **kwargs): ...
+```
+
+Calling a featurizer instance directly is equivalent to calling `featurize()`:
+
+```python
+featurizer = dc.feat.CircularFingerprint(size=1024)
+features = featurizer(["CCO", "c1ccccc1"])
+```
+
+Specialized abstract base classes enforce the expected input format:
+
+<CardGroup cols={2}>
+  <Card title="MolecularFeaturizer" icon="flask">
+    Accepts SMILES strings or RDKit `Mol` objects. Automatically parses SMILES and applies canonical atom ordering. Requires RDKit.
+  </Card>
+  <Card title="ComplexFeaturizer" icon="puzzle-piece">
+    Accepts pairs of filenames `(ligand_file, protein_file)` for protein-ligand complex featurization.
+  </Card>
+  <Card title="MaterialStructureFeaturizer" icon="cube">
+    Accepts `pymatgen.core.Structure` objects or their dictionary representations for periodic crystal structures.
+  </Card>
+  <Card title="MaterialCompositionFeaturizer" icon="table">
+    Accepts chemical composition strings (e.g., `"Fe2O3"`) for composition-based material descriptors.
+  </Card>
+</CardGroup>
+
+## Molecular featurizers
+
+### CircularFingerprint
+
+Computes Morgan (ECFP) circular fingerprints, the most widely used fingerprint for QSAR and virtual screening. The output is a fixed-length binary or count bit vector.
+
+```python
+dc.feat.CircularFingerprint(
+    radius: int = 2,
+    size: int = 2048,
+    chiral: bool = False,
+    bonds: bool = True,
+    features: bool = False,
+    sparse: bool = False,
+    smiles: bool = False,
+    is_counts_based: bool = False,
+)
+```
+
+```python
+import deepchem as dc
+
+featurizer = dc.feat.CircularFingerprint(size=2048, radius=4)
+smiles = ["C1=CC=CC=C1", "CCO", "c1ccc(cc1)O"]
+features = featurizer.featurize(smiles)
+print(features.shape)   # (3, 2048)
+print(features[0].dtype)  # float64
+```
+
+### MolGraphConvFeaturizer
+
+Produces graph-structured features compatible with graph neural network models such as `GCNModel`, `GATModel`, and `AttentiveFPModel`. Each molecule is represented as a `GraphData` object with atom-level node features (length 30) and optional bond-level edge features (length 11).
+
+```python
+dc.feat.MolGraphConvFeaturizer(
+    use_edges: bool = False,
+    use_chirality: bool = False,
+    use_partial_charge: bool = False,
+)
+```
+
+```python
+import deepchem as dc
+
+featurizer = dc.feat.MolGraphConvFeaturizer(use_edges=True)
+smiles = ["C1CCC1", "C1=CC=CN=C1"]
+graphs = featurizer.featurize(smiles)
+print(type(graphs[0]))           # <class 'deepchem.feat.graph_data.GraphData'>
+print(graphs[0].num_node_features)  # 30
+print(graphs[0].num_edge_features)  # 11
+```
+
+### RDKitDescriptors
+
+Computes a panel of physicochemical descriptors from RDKit, such as molecular weight, logP, TPSA, and hydrogen bond donor/acceptor counts. The output is a 1D float vector.
+
+```python
+dc.feat.RDKitDescriptors(
+    use_fragment: bool = True,
+    ipc_avg: bool = True,
+)
+```
+
+### CoulombMatrix
+
+Computes the Coulomb matrix representation used in quantum chemistry. The matrix encodes nuclear charges and inter-atomic distances. It is commonly used as input for models predicting quantum mechanical properties.
+
+```python
+dc.feat.CoulombMatrix(
+    max_atoms: int,
+    randomize: bool = False,
+    upper_tri: bool = False,
+)
+```
+
+### MATFeaturizer
+
+Produces features for the Molecule Attention Transformer (MAT), encoding atoms, bonds, and distances as required by the MAT architecture.
+
+```python
+dc.feat.MATFeaturizer()
+```
+
+### DMPNNFeaturizer
+
+Generates directed message passing graph features used by the `DMPNNModel` (Directed Message Passing Neural Network). Returns per-atom and per-bond feature arrays.
+
+```python
+dc.feat.DMPNNFeaturizer(
+    features_generators: Optional[List[str]] = None,
+    atom_descriptors_path: Optional[str] = None,
+    bond_features_path: Optional[str] = None,
+    is_reaction: bool = False,
+)
+```
+
+### GroverFeaturizer
+
+Produces molecular graph features in the format expected by the `Grover` self-supervised pre-training model.
+
+```python
+dc.feat.GroverFeaturizer(
+    features_generator: Optional[List[str]] = None,
+)
+```
+
+## Material featurizers
+
+<CardGroup cols={2}>
+  <Card title="ElementPropertyFingerprint" icon="atom">
+    Encodes the elemental composition of a material using statistics over element properties (e.g., electronegativity, atomic radius). Extends `MaterialCompositionFeaturizer`. Requires `matminer`.
+  </Card>
+  <Card title="SineCoulombMatrix" icon="wave-square">
+    Generates a Coulomb-matrix-like descriptor adapted for periodic crystal structures by using sine functions. Extends `MaterialStructureFeaturizer`. Requires `pymatgen`.
+  </Card>
+  <Card title="CGCNNFeaturizer" icon="diagram-project">
+    Produces graph features for the Crystal Graph Convolutional Neural Network (CGCNN). Represents a crystal as a graph of atoms connected by bonds within a cutoff radius. Requires `pymatgen`.
+
+    ```python
+    dc.feat.CGCNNFeaturizer(
+        radius: float = 8.0,
+        max_neighbors: int = 12,
+        step: float = 0.2,
+    )
+    ```
+  </Card>
+  <Card title="ElemNetFeaturizer" icon="table-cells">
+    One-hot encodes the fractional composition of elements present in a material. Used as input to the ElemNet deep learning model. Requires `pymatgen`.
+  </Card>
+</CardGroup>
+
+## Sequence featurizers for biological data
+
+DeepChem includes featurizers for biological sequence data. These require optional dependencies:
+
+| Featurizer | Input | Description |
+|---|---|---|
+| `SAMFeaturizer` | SAM file | Featurizes short-read alignments |
+| `BAMFeaturizer` | BAM file | Binary alignment format version of SAMFeaturizer |
+| `FASTAFeaturizer` | FASTA file | Encodes genomic or protein sequences |
+| `SmilesToSeq` | SMILES string | Converts SMILES to a character-level integer sequence |
+| `HuggingFaceFeaturizer` | Text | Wraps any HuggingFace tokenizer for use as a DeepChem featurizer |
+
+<Warning>
+Biological sequence featurizers require `pysam` or equivalent libraries. They are imported with a try/except block and will be silently skipped if dependencies are missing.
+</Warning>

@@ -1,0 +1,410 @@
+---
+title: "Molecular Featurizers — dc.feat"
+description: "Reference for DeepChem's molecular featurizers including CircularFingerprint, MolGraphConvFeaturizer, RDKitDescriptors, and CoulombMatrix."
+---
+
+Molecular featurizers in `dc.feat` convert molecules — provided as SMILES strings or RDKit `Mol` objects — into fixed-length vectors, graph objects, or matrix representations suitable for machine learning models. Each featurizer class inherits from `MolecularFeaturizer` and exposes a `featurize(molecules)` method that accepts a list of inputs and returns a NumPy array of features.
+
+<Note>
+All molecular featurizers require RDKit to be installed: `pip install rdkit`.
+</Note>
+
+## CircularFingerprint
+
+Extended Connectivity Circular Fingerprints (Morgan fingerprints) represent a molecule as a bag-of-words over local neighborhoods, hashed into a fixed-length bit vector. They are the standard choice for structure–activity modelling.
+
+```python
+dc.feat.CircularFingerprint(
+    radius: int = 2,
+    size: int = 2048,
+    chiral: bool = False,
+    bonds: bool = True,
+    features: bool = False,
+    sparse: bool = False,
+    smiles: bool = False,
+    is_counts_based: bool = False,
+)
+```
+
+<ParamField path="radius" type="int" default="2">
+  Fingerprint radius. Higher values capture larger substructures.
+</ParamField>
+
+<ParamField path="size" type="int" default="2048">
+  Length of the generated bit vector.
+</ParamField>
+
+<ParamField path="chiral" type="bool" default="false">
+  Whether to include chirality information.
+</ParamField>
+
+<ParamField path="bonds" type="bool" default="true">
+  Whether to include bond order information.
+</ParamField>
+
+<ParamField path="features" type="bool" default="false">
+  Use RDKit feature-based atom invariants instead of atomic numbers.
+</ParamField>
+
+<ParamField path="sparse" type="bool" default="false">
+  Return a sparse dictionary instead of a dense bit vector.
+</ParamField>
+
+<ParamField path="smiles" type="bool" default="false">
+  When `sparse=True`, include SMILES strings for fragment IDs.
+</ParamField>
+
+<ParamField path="is_counts_based" type="bool" default="false">
+  Generate a counts-based fingerprint instead of a binary bit vector.
+</ParamField>
+
+**Returns:** `np.ndarray` of shape `(size,)` for dense mode, or `dict` when `sparse=True`.
+
+```python example.py
+import deepchem as dc
+
+smiles = ["C1=CC=CC=C1", "CC(=O)OC1=CC=CC=C1C(=O)O"]
+featurizer = dc.feat.CircularFingerprint(size=2048, radius=4)
+features = featurizer.featurize(smiles)
+# features[0].shape == (2048,)
+```
+
+---
+
+## MolGraphConvFeaturizer
+
+Featurizes molecules as graph objects suitable for graph neural networks (GCN, GAT, MPNN). Node features encode atom type, formal charge, hybridization, hydrogen bonding, aromaticity, degree, and hydrogen count (30 features by default). Edge features encode bond type, ring membership, conjugation, and stereo (11 features).
+
+```python
+dc.feat.MolGraphConvFeaturizer(
+    use_edges: bool = False,
+    use_chirality: bool = False,
+    use_partial_charge: bool = False,
+)
+```
+
+<ParamField path="use_edges" type="bool" default="false">
+  Include edge (bond) features in the returned `GraphData` object.
+</ParamField>
+
+<ParamField path="use_chirality" type="bool" default="false">
+  Append chirality one-hot encoding to node features. Slows featurization.
+</ParamField>
+
+<ParamField path="use_partial_charge" type="bool" default="false">
+  Append Gasteiger partial charges to node features. Slows featurization and may fail on some molecules.
+</ParamField>
+
+**Returns:** `GraphData` object with `node_features`, `edge_index`, and optionally `edge_features`.
+
+<Note>
+`MolGraphConvFeaturizer` is the required featurizer for `GCNModel`, `GATModel`, `AttentiveFPModel`, and `MPNNModel`.
+</Note>
+
+```python example.py
+import deepchem as dc
+
+smiles = ["C1CCC1", "C1=CC=CN=C1"]
+featurizer = dc.feat.MolGraphConvFeaturizer(use_edges=True)
+out = featurizer.featurize(smiles)
+# type(out[0]) -> deepchem.feat.graph_data.GraphData
+# out[0].num_node_features == 30
+# out[0].num_edge_features == 11
+```
+
+### MolGraphConvFeaturizer vs ConvMolFeaturizer
+
+| | `MolGraphConvFeaturizer` | `ConvMolFeaturizer` |
+|---|---|---|
+| Return type | `GraphData` | `ConvMol` |
+| Compatible models | `GCNModel`, `GATModel`, `MPNNModel`, `AttentiveFPModel` | `GraphConvModel` |
+| Edge features | Optional | Not supported |
+| Atom features | 30 (WeaveNet-style) | Variable |
+
+Use `MolGraphConvFeaturizer` for PyTorch-based graph models and `ConvMolFeaturizer` for `GraphConvModel` (TensorFlow-based Duvenaud convolutions).
+
+---
+
+## RDKitDescriptors
+
+Computes physicochemical descriptors from RDKit including molecular weight, logP, number of H-bond donors/acceptors, ring counts, fragment counts (`fr_*`), and more. By default all available RDKit descriptors are returned.
+
+```python
+dc.feat.RDKitDescriptors(
+    descriptors: List[str] = [],
+    is_normalized: bool = False,
+    use_fragment: bool = True,
+    ipc_avg: bool = True,
+    use_bcut2d: bool = True,
+    labels_only: bool = False,
+)
+```
+
+<ParamField path="descriptors" type="List[str]" default="[]">
+  Explicit list of RDKit descriptor names to compute. When empty, all descriptors matching the other filter options are used.
+</ParamField>
+
+<ParamField path="use_fragment" type="bool" default="true">
+  Include binary fragment descriptors (`fr_*`).
+</ParamField>
+
+<ParamField path="ipc_avg" type="bool" default="true">
+  Compute the IPC descriptor with `avg=True` to avoid overflow.
+</ParamField>
+
+<ParamField path="is_normalized" type="bool" default="false">
+  Normalize descriptor values using fitted cumulative density functions.
+</ParamField>
+
+<ParamField path="use_bcut2d" type="bool" default="true">
+  Include `BCUT2D_*` descriptors. Note that normalization parameters are not available for BCUT2D descriptors.
+</ParamField>
+
+<ParamField path="labels_only" type="bool" default="false">
+  Return binary presence/absence indicators instead of numeric values.
+</ParamField>
+
+**Returns:** `np.ndarray` of shape `(n_descriptors,)`. With default settings the output length is 210.
+
+```python example.py
+import deepchem as dc
+
+smiles = ["CC(=O)OC1=CC=CC=C1C(=O)O"]
+featurizer = dc.feat.RDKitDescriptors()
+features = featurizer.featurize(smiles)
+# features[0].shape == (210,)
+```
+
+---
+
+## CoulombMatrix
+
+Represents the electronic structure of a molecule as an N×N matrix where each element gives the electrostatic interaction strength between two atoms. Used for quantum chemistry property prediction.
+
+```python
+dc.feat.CoulombMatrix(
+    max_atoms: int,
+    remove_hydrogens: bool = False,
+    randomize: bool = False,
+    upper_tri: bool = False,
+    n_samples: int = 1,
+    seed: Optional[int] = None,
+)
+```
+
+<ParamField path="max_atoms" type="int" required>
+  Maximum number of atoms expected across all molecules in the dataset. The matrix is zero-padded to this size.
+</ParamField>
+
+<ParamField path="remove_hydrogens" type="bool" default="false">
+  Strip hydrogen atoms before computing the matrix.
+</ParamField>
+
+<ParamField path="randomize" type="bool" default="false">
+  Use row-norm-sorted random permutations of the matrix for data augmentation.
+</ParamField>
+
+<ParamField path="upper_tri" type="bool" default="false">
+  Return only the upper triangular portion (flattened).
+</ParamField>
+
+<ParamField path="n_samples" type="int" default="1">
+  Number of random permutations to draw when `randomize=True`.
+</ParamField>
+
+<ParamField path="seed" type="int">
+  Random seed for reproducibility.
+</ParamField>
+
+**Returns:** `np.ndarray` of shape `(max_atoms, max_atoms)` for a single conformer, or `(num_confs, max_atoms, max_atoms)` for multiple conformers.
+
+```python example.py
+import deepchem as dc
+
+featurizer = dc.feat.CoulombMatrix(max_atoms=23)
+loader = dc.data.SDFLoader(
+    tasks=["atomization_energy"],
+    featurizer=featurizer,
+)
+dataset = loader.create_dataset("molecules.sdf")
+```
+
+<Tip>
+`CoulombMatrixEig` (also in `dc.feat`) returns the sorted eigenvalues of the Coulomb matrix as a 1D vector of length `max_atoms`, which is rotation-invariant and more compact.
+</Tip>
+
+---
+
+## MACCSKeysFingerprint
+
+Computes the 167-bit MACCS (Molecular ACCess System) structural keys. Each bit encodes the presence or absence of a predefined substructural pattern. The featurizer takes no constructor parameters.
+
+```python
+dc.feat.MACCSKeysFingerprint()
+```
+
+**Returns:** `np.ndarray` of shape `(167,)`.
+
+```python example.py
+import deepchem as dc
+
+smiles = ["CC(=O)OC1=CC=CC=C1C(=O)O"]
+featurizer = dc.feat.MACCSKeysFingerprint()
+features = featurizer.featurize(smiles)
+# features[0].shape == (167,)
+```
+
+---
+
+## WeaveFeaturizer
+
+Featurizes molecules as `WeaveMol` objects for Weave/MPNN-style models. In addition to per-atom features (75 features), it computes pairwise atom–atom interaction descriptors that encode bond types, ring membership, and graph or Euclidean distance between every atom pair.
+
+```python
+dc.feat.WeaveFeaturizer(
+    graph_distance: bool = True,
+    explicit_H: bool = False,
+    use_chirality: bool = False,
+    max_pair_distance: Optional[int] = None,
+)
+```
+
+<ParamField path="graph_distance" type="bool" default="true">
+  Use topological graph distance for pair features. Set to `False` to use Euclidean distance (requires 3D conformer).
+</ParamField>
+
+<ParamField path="explicit_H" type="bool" default="false">
+  Include explicit hydrogen atoms in the featurization.
+</ParamField>
+
+<ParamField path="use_chirality" type="bool" default="false">
+  Include chirality information in atom and bond features.
+</ParamField>
+
+<ParamField path="max_pair_distance" type="int">
+  Maximum graph distance for which pair features are computed. `None` includes all pairs.
+</ParamField>
+
+**Returns:** `WeaveMol` object. `get_atom_features()` returns shape `(n_atoms, 75)`. `get_pair_features()` returns shape `(n_atoms^2, 14)`.
+
+```python example.py
+import deepchem as dc
+
+mols = ["CCC"]
+featurizer = dc.feat.WeaveFeaturizer()
+features = featurizer.featurize(mols)
+# features[0].get_num_atoms() == 3
+# features[0].get_atom_features().shape == (3, 75)
+```
+
+---
+
+## MATFeaturizer
+
+Featurizer for the Molecule Attention Transformer (MAT). Returns a `MATEncoding` dataclass containing node features, an adjacency matrix, and a distance matrix for the input molecule.
+
+```python
+dc.feat.MATFeaturizer()
+```
+
+No constructor parameters. Compatible with `MATModel`.
+
+```python example.py
+import deepchem as dc
+
+feat = dc.feat.MATFeaturizer()
+out = feat.featurize("CCC")
+# out[0] is a MATEncoding with .node_features, .adjacency_matrix, .distance_matrix
+```
+
+---
+
+## DMPNNFeaturizer
+
+Featurizer for the Directed Message Passing Neural Network (D-MPNN). Produces `GraphData` objects with directed bond features. Also supports optional additional molecular features appended from a secondary featurizer such as `CircularFingerprint` or `RDKitDescriptors`.
+
+```python
+dc.feat.DMPNNFeaturizer(
+    features_generators: Optional[List[str]] = None,
+    atom_descriptors_path: Optional[str] = None,
+    is_reaction: bool = False,
+)
+```
+
+Compatible with `DMPNNModel`.
+
+---
+
+## GroverFeaturizer
+
+Featurizer for the GROVER self-supervised graph transformer. Builds a molecular graph and computes 85 functional-group labels (used during pretraining) and optional additional molecular features (used during finetuning).
+
+```python
+dc.feat.GroverFeaturizer(
+    features_generator: Optional[MolecularFeaturizer] = None,
+    bond_drop_rate: float = 0.0,
+)
+```
+
+<ParamField path="features_generator" type="MolecularFeaturizer">
+  Optional additional featurizer (e.g. `CircularFingerprint`) whose output is appended as global molecular features for finetuning.
+</ParamField>
+
+<ParamField path="bond_drop_rate" type="float" default="0.0">
+  Fraction of bonds to randomly drop during featurization (data augmentation for pretraining).
+</ParamField>
+
+Compatible with `GroverModel`.
+
+```python example.py
+import deepchem as dc
+
+feat = dc.feat.GroverFeaturizer(
+    features_generator=dc.feat.CircularFingerprint()
+)
+out = feat.featurize("CCC")
+```
+
+---
+
+## Additional featurizers
+
+<AccordionGroup>
+  <Accordion title="PagtnMolGraphFeaturizer">
+    Path-Augmented Graph Transformer Network featurizer. Builds a complete molecular graph where each node pair is connected with edge features encoding the shortest path between them. Node feature length: 94. Edge feature length: 42.
+
+    ```python
+    dc.feat.PagtnMolGraphFeaturizer(max_length: int = 5)
+    ```
+
+    Compatible with `PAGTNModel`.
+  </Accordion>
+
+  <Accordion title="MolGanFeaturizer">
+    Featurizes molecules as adjacency and node-feature tensors suitable for generative adversarial networks operating on molecular graphs (`MolGAN`).
+  </Accordion>
+
+  <Accordion title="SNAPFeaturizer">
+    Featurizer compatible with the SNAP pretrained graph encoder. Produces `GraphData` objects with atom and bond features aligned to the SNAP pretraining vocabulary.
+  </Accordion>
+
+  <Accordion title="MXMNetFeaturizer">
+    Produces `GraphData` with 3D node position features for the Molecular Mechanics-like GNN (MXMNet), which requires atomic 3D coordinates.
+  </Accordion>
+
+  <Accordion title="EquivariantGraphFeaturizer">
+    Produces graph objects suitable for SE(3)-equivariant graph neural networks. Requires 3D conformer data.
+  </Accordion>
+
+  <Accordion title="Mol2VecFingerprint">
+    Generates molecular fingerprints by applying Word2Vec-style embeddings to Morgan substructure identifiers. Requires the `mol2vec` package.
+  </Accordion>
+
+  <Accordion title="MordredDescriptors">
+    Computes descriptors using the Mordred library. Returns over 1800 descriptors. Requires `mordred` and `rdkit`.
+  </Accordion>
+
+  <Accordion title="PubChemFingerprint">
+    Returns the 881-bit PubChem fingerprint by querying the PubChem REST API. Requires an internet connection.
+  </Accordion>
+</AccordionGroup>

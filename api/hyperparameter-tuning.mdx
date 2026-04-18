@@ -1,0 +1,300 @@
+---
+title: "Hyperparameter Optimization — dc.hyper"
+description: "Reference for DeepChem's hyperparameter optimization classes: GridHyperparamOpt, GaussianProcessHyperparamOpt, and RandomHyperparamOpt."
+---
+
+The `dc.hyper` module provides hyperparameter optimization utilities that integrate directly with DeepChem models and datasets. All optimizers accept a `model_builder` callable — a factory function that returns a new `dc.models.Model` instance given a dictionary of hyperparameters — and a `dc.metrics.Metric` object to score candidate models on a held-out validation set.
+
+Three optimizer classes are available:
+
+<CardGroup cols={3}>
+  <Card title="GridHyperparamOpt" icon="table-cells">
+    Exhaustive search over every combination in a discrete parameter grid.
+  </Card>
+  <Card title="GaussianProcessHyperparamOpt" icon="chart-line">
+    Bayesian optimization with a Gaussian process surrogate model.
+  </Card>
+  <Card title="RandomHyperparamOpt" icon="shuffle">
+    Random sampling from a discrete parameter grid.
+  </Card>
+</CardGroup>
+
+---
+
+## Base class: HyperparamOpt
+
+All optimizer classes inherit from `HyperparamOpt`. It is abstract and should not be instantiated directly.
+
+**Constructor parameter shared by all subclasses:**
+
+<ParamField path="model_builder" type="Callable[..., dc.models.Model]" required>
+  A function that accepts keyword arguments corresponding to hyperparameter names and returns a `dc.models.Model` instance. DeepChem passes the current hyperparameter dictionary as `**model_params` to this function on each trial.
+</ParamField>
+
+---
+
+## GridHyperparamOpt
+
+Performs an exhaustive grid search over all combinations of the provided parameter values. The total number of model training runs equals the Cartesian product of all value lists in `params_dict`.
+
+```python
+dc.hyper.GridHyperparamOpt(model_builder)
+```
+
+### hyperparam_search
+
+```python
+optimizer.hyperparam_search(
+    params_dict,
+    train_dataset,
+    valid_dataset,
+    metric,
+    output_transformers=[],
+    nb_epoch=10,
+    use_max=True,
+    logfile='results.txt',
+    logdir=None,
+)
+```
+
+Returns a `(best_model, best_hyperparams, all_scores)` tuple.
+
+<ParamField path="params_dict" type="Dict[str, List]" required>
+  Maps hyperparameter names to lists of candidate values. Every combination of values across all keys is evaluated. For example, `{'learning_rate': [0.001, 0.01], 'dropout': [0.1, 0.5]}` runs four trials.
+</ParamField>
+
+<ParamField path="train_dataset" type="dc.data.Dataset" required>
+  Dataset used to train each candidate model.
+</ParamField>
+
+<ParamField path="valid_dataset" type="dc.data.Dataset" required>
+  Dataset used to evaluate and rank candidate models.
+</ParamField>
+
+<ParamField path="metric" type="dc.metrics.Metric" required>
+  The metric used to compare candidate models. The model with the best score on `valid_dataset` is returned.
+</ParamField>
+
+<ParamField path="output_transformers" type="List[dc.trans.Transformer]" default="[]">
+  Transformers applied to inverse-transform predictions before metric computation. Required if the training labels were normalized.
+</ParamField>
+
+<ParamField path="nb_epoch" type="number" default="10">
+  Number of training epochs per trial. Not used by all model types; models that do not accept `nb_epoch` fall back to calling `fit()` without it.
+</ParamField>
+
+<ParamField path="use_max" type="boolean" default="true">
+  If `True`, returns the model with the highest validation score. Set to `False` for error metrics like RMSE where lower is better.
+</ParamField>
+
+<ParamField path="logdir" type="string">
+  Directory path in which to store trained model checkpoints and a results log. Temporary directories are used when not set.
+</ParamField>
+
+<ParamField path="logfile" type="string" default="results.txt">
+  Filename (relative to `logdir`) for writing a summary of all hyperparameter combinations and their validation scores.
+</ParamField>
+
+**Return values:**
+
+<ResponseField name="best_model" type="dc.models.Model">
+  The trained model instance that achieved the best validation score.
+</ResponseField>
+
+<ResponseField name="best_hyperparams" type="dict">
+  Dictionary mapping hyperparameter names to the values that produced the best model.
+</ResponseField>
+
+<ResponseField name="all_scores" type="dict">
+  Dictionary mapping string representations of each hyperparameter combination to its validation score.
+</ResponseField>
+
+### Code example
+
+```python
+import deepchem as dc
+import numpy as np
+from sklearn.linear_model import LogisticRegression as LR
+
+# Build a simple dataset
+X = np.arange(1, 11, 1).reshape(-1, 1)
+y = np.hstack((np.zeros(5), np.ones(5)))
+dataset = dc.data.NumpyDataset(X, y)
+
+splitter = dc.splits.RandomSplitter()
+train, test = splitter.train_test_split(dataset, seed=0)
+
+metric = dc.metrics.Metric(dc.metrics.accuracy_score)
+
+def model_builder(**model_params):
+    penalty = model_params['penalty']
+    solver = model_params['solver']
+    lr = LR(penalty=penalty, solver=solver, max_iter=100)
+    return dc.models.SklearnModel(lr)
+
+params = {
+    'penalty': ['l1', 'l2'],
+    'solver': ['liblinear', 'saga'],
+}
+
+optimizer = dc.hyper.GridHyperparamOpt(model_builder)
+best_model, best_hyperparams, all_results = optimizer.hyperparam_search(
+    params, train, test, metric
+)
+print(best_hyperparams)
+# {'penalty': 'l2', 'solver': 'saga'}
+```
+
+<Tip>
+  During hyperparameter search, set `nb_epoch` to a small value (e.g., 5–10) to reduce wall-clock time. Once the best hyperparameters are identified, retrain the final model for the full number of epochs.
+</Tip>
+
+---
+
+## GaussianProcessHyperparamOpt
+
+Uses Bayesian optimization with a Gaussian process surrogate (via the `pyGPGO` library) to navigate a continuous hyperparameter space. Unlike `GridHyperparamOpt`, this optimizer works with numerical hyperparameters and explores the space around an initial value defined by `search_range`.
+
+<Note>
+  `GaussianProcessHyperparamOpt` requires `pyGPGO` to be installed: `pip install pyGPGO`. The `params_dict` semantics differ from `GridHyperparamOpt` — values must be scalars (int or float), not lists.
+</Note>
+
+```python
+dc.hyper.GaussianProcessHyperparamOpt(
+    model_builder,
+    max_iter=20,
+    search_range=4,
+)
+```
+
+**Constructor parameters:**
+
+<ParamField path="model_builder" type="Callable[..., dc.models.Model]" required>
+  A factory function that accepts hyperparameter keyword arguments and returns a `dc.models.Model`.
+</ParamField>
+
+<ParamField path="max_iter" type="number" default="20">
+  Number of Bayesian optimization iterations (model training runs).
+</ParamField>
+
+<ParamField path="search_range" type="number | Dict" default="4">
+  Defines the search interval around each initial hyperparameter value. For a global scalar `r` and initial value `v`, the optimizer searches over `[v / r, v * r]`. Pass a dictionary with the same keys as `params_dict` to specify per-parameter ranges.
+</ParamField>
+
+### hyperparam_search
+
+```python
+optimizer.hyperparam_search(
+    params_dict,
+    train_dataset,
+    valid_dataset,
+    metric,
+    output_transformers=[],
+    nb_epoch=10,
+    use_max=True,
+    logfile='results.txt',
+    logdir=None,
+)
+```
+
+`params_dict` maps hyperparameter names to scalar initial values (int or float). The optimizer derives the search interval from the initial value and `search_range`.
+
+Returns `(best_model, best_hyperparams, all_scores)` — the same structure as `GridHyperparamOpt`.
+
+### Code example
+
+```python
+import numpy as np
+import deepchem as dc
+from sklearn.ensemble import RandomForestRegressor as RF
+
+def model_builder(**model_params):
+    n_estimators = model_params['n_estimators']
+    min_samples_split = model_params['min_samples_split']
+    rf = RF(n_estimators=n_estimators, min_samples_split=min_samples_split)
+    return dc.models.SklearnModel(rf)
+
+train_dataset = dc.data.NumpyDataset(
+    X=np.random.rand(50, 5), y=np.random.rand(50, 1)
+)
+valid_dataset = dc.data.NumpyDataset(
+    X=np.random.rand(20, 5), y=np.random.rand(20, 1)
+)
+
+metric = dc.metrics.Metric(dc.metrics.pearson_r2_score)
+optimizer = dc.hyper.GaussianProcessHyperparamOpt(model_builder, max_iter=10)
+
+# params_dict values are initial scalar values, not lists
+params_dict = {"n_estimators": 100, "min_samples_split": 2}
+best_model, best_hyperparams, all_results = optimizer.hyperparam_search(
+    params_dict, train_dataset, valid_dataset, metric
+)
+```
+
+---
+
+## RandomHyperparamOpt
+
+Samples hyperparameter combinations randomly from the provided `params_dict` (which uses the same list-of-values format as `GridHyperparamOpt`). This is more efficient than grid search for large parameter spaces where not all combinations need to be evaluated.
+
+```python
+dc.hyper.RandomHyperparamOpt(model_builder, max_iter=20)
+```
+
+**Constructor parameters:**
+
+<ParamField path="model_builder" type="Callable[..., dc.models.Model]" required>
+  A factory function that accepts hyperparameter keyword arguments and returns a `dc.models.Model`.
+</ParamField>
+
+<ParamField path="max_iter" type="number">
+  Maximum number of random hyperparameter combinations to evaluate. Limits total training runs regardless of the grid size.
+</ParamField>
+
+### Code example
+
+```python
+import deepchem as dc
+import numpy as np
+from sklearn.linear_model import LogisticRegression as LR
+
+X = np.arange(1, 11, 1).reshape(-1, 1)
+y = np.hstack((np.zeros(5), np.ones(5)))
+dataset = dc.data.NumpyDataset(X, y)
+
+splitter = dc.splits.RandomSplitter()
+train, test = splitter.train_test_split(dataset, seed=0)
+
+metric = dc.metrics.Metric(dc.metrics.accuracy_score)
+
+def model_builder(**model_params):
+    penalty = model_params['penalty']
+    solver = model_params['solver']
+    lr = LR(penalty=penalty, solver=solver, max_iter=100)
+    return dc.models.SklearnModel(lr)
+
+params = {
+    'penalty': ['l1', 'l2'],
+    'solver': ['liblinear', 'saga'],
+}
+
+optimizer = dc.hyper.RandomHyperparamOpt(model_builder, max_iter=3)
+best_model, best_hyperparams, all_results = optimizer.hyperparam_search(
+    params, train, test, metric
+)
+print(best_hyperparams)
+```
+
+---
+
+## Choosing an optimizer
+
+| Optimizer | Search space | Efficiency | External dependency |
+|---|---|---|---|
+| `GridHyperparamOpt` | Discrete lists | Low — evaluates all combinations | None |
+| `RandomHyperparamOpt` | Discrete lists | Medium — samples up to `max_iter` | None |
+| `GaussianProcessHyperparamOpt` | Continuous numerical | High — learns from prior trials | `pyGPGO` |
+
+<Tip>
+  For models with more than three hyperparameters or large value lists, `GaussianProcessHyperparamOpt` will typically find good configurations with far fewer training runs than grid search. Use `GridHyperparamOpt` when the grid is small (fewer than ~20 combinations) or when you need a complete enumeration of results for reporting.
+</Tip>

@@ -1,97 +1,82 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "DeepChem: Deep Learning for Drug Discovery & Science"
+description: "DeepChem is an open-source Python library democratizing deep learning for drug discovery, quantum chemistry, materials science, and biology."
 ---
 
-## Setting up
+DeepChem provides a unified, high-quality toolchain for applying deep learning to scientific domains — from predicting molecular toxicity to modeling quantum chemical properties. Whether you're screening drug candidates, designing new materials, or studying protein-ligand interactions, DeepChem gives you the models, featurizers, and datasets to get started quickly.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install DeepChem with pip, conda, or Docker. Supports PyTorch, TensorFlow, and JAX backends.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first molecular property prediction in minutes with a working end-to-end example.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Core Concepts" icon="book" href="/concepts/datasets">
+    Learn about DeepChem's datasets, featurizers, models, splitters, and transformers.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/models/overview">
+    Explore the full API surface including all models, featurizers, and data loaders.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What can you build with DeepChem?
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Drug Discovery" icon="flask" href="/guides/drug-discovery">
+    Predict ADMET properties, classify toxicity, and screen compound libraries using graph neural networks and transformers.
+  </Card>
+  <Card title="Materials Science" icon="atom" href="/guides/materials-science">
+    Model crystal structures and predict material properties using CGCNN, MEGNet, and other architectures.
+  </Card>
+  <Card title="Quantum Chemistry" icon="magnifying-glass" href="/guides/quantum-chemistry">
+    Predict quantum mechanical properties on QM7, QM8, and QM9 datasets with neural networks.
+  </Card>
+  <Card title="Molecular Generation" icon="wand-magic-sparkles" href="/guides/molecular-generation">
+    Generate novel molecules with GANs, VAEs, and reinforcement learning using DeepChem's generative models.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Get started in 4 steps
 
-## Need inspiration?
+<Steps>
+  <Step title="Install DeepChem">
+    Install the core library with your preferred deep learning backend:
+    ```bash
+    pip install deepchem
+    # For PyTorch support:
+    pip install deepchem[torch]
+    ```
+  </Step>
+  <Step title="Load a dataset">
+    Use MoleculeNet to load a benchmark dataset with automatic featurization and splitting:
+    ```python
+    import deepchem as dc
+    tasks, datasets, transformers = dc.molnet.load_tox21()
+    train_dataset, valid_dataset, test_dataset = datasets
+    ```
+  </Step>
+  <Step title="Train a model">
+    Train a graph convolutional network on the loaded data:
+    ```python
+    model = dc.models.GCNModel(n_tasks=len(tasks), mode='classification')
+    model.fit(train_dataset, nb_epoch=50)
+    ```
+  </Step>
+  <Step title="Evaluate performance">
+    Measure model performance with standard metrics:
+    ```python
+    metric = dc.metrics.Metric(dc.metrics.roc_auc_score)
+    results = model.evaluate(test_dataset, [metric], transformers)
+    print(results)
+    ```
+  </Step>
+</Steps>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## MoleculeNet benchmarks
+
+DeepChem ships with [MoleculeNet](/moleculenet/overview), a curated collection of 40+ datasets spanning molecular properties, toxicity, quantum chemistry, and biophysics — making it easy to benchmark models and reproduce results from the literature.
+
+<Note>
+  DeepChem supports Python 3.7–3.12. For GPU acceleration, install CUDA before installing your preferred deep learning framework.
+</Note>

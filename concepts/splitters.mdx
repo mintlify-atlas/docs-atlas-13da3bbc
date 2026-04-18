@@ -1,0 +1,185 @@
+---
+title: "Dataset Splitting Strategies in DeepChem"
+description: "DeepChem splitters divide molecular datasets for training, validation, and testing using random, scaffold, Butina, and other methods."
+---
+
+How you divide a molecular dataset into training, validation, and test sets has a large impact on whether benchmark results reflect real-world generalization. If test molecules are too structurally similar to training molecules, a model can appear highly accurate while completely failing on novel chemical space. DeepChem's `Splitter` classes provide a range of strategies, from naive random splits to cheminformatics-aware scaffold and clustering methods.
+
+## The Splitter base class
+
+`dc.splits.Splitter` is the abstract base class for all splitters. The three main methods are:
+
+```python
+class Splitter:
+    def train_valid_test_split(
+        self,
+        dataset: Dataset,
+        train_dir: Optional[str] = None,
+        valid_dir: Optional[str] = None,
+        test_dir: Optional[str] = None,
+        frac_train: float = 0.8,
+        frac_valid: float = 0.1,
+        frac_test: float = 0.1,
+        seed: Optional[int] = None,
+        log_every_n: int = 1000,
+        **kwargs,
+    ) -> Tuple[Dataset, Dataset, Dataset]: ...
+
+    def train_test_split(
+        self,
+        dataset: Dataset,
+        train_dir: Optional[str] = None,
+        test_dir: Optional[str] = None,
+        frac_train: float = 0.8,
+        seed: Optional[int] = None,
+        **kwargs,
+    ) -> Tuple[Dataset, Dataset]: ...
+
+    def k_fold_split(
+        self,
+        dataset: Dataset,
+        k: int,
+        directories: Optional[List[str]] = None,
+        **kwargs,
+    ) -> List[Tuple[Dataset, Dataset]]: ...
+```
+
+All splitters also expose `split()`, which returns raw index tuples `(train_inds, valid_inds, test_inds)` without materializing new datasets.
+
+## Available splitters
+
+### RandomSplitter
+
+Shuffles the dataset and divides it by the specified fractions. Fast and has no dependencies, but provides no guarantees that the test set will contain chemotypes absent from training.
+
+```python
+splitter = dc.splits.RandomSplitter()
+train, valid, test = splitter.train_valid_test_split(dataset)
+```
+
+### ScaffoldSplitter
+
+Groups molecules by their Bemis-Murcko scaffold (ring systems and linker atoms), then assigns entire scaffold groups to train, validation, or test. Large scaffold groups go to training; smaller, less-represented scaffolds go to test. SMILES strings must be present in `dataset.ids`.
+
+This is the most widely used splitter for drug discovery benchmarks because it tests generalization to structurally novel chemotypes.
+
+```python
+splitter = dc.splits.ScaffoldSplitter()
+train, valid, test = splitter.train_valid_test_split(dataset)
+```
+
+<Note>
+`ScaffoldSplitter` reads molecule identities from `dataset.ids`, which must contain valid SMILES strings. When constructing a `DiskDataset` from a CSV, pass the SMILES column to `ids` via the loader's `id_field` argument.
+</Note>
+
+### ButinaSplitter
+
+Clusters molecules using the Taylor-Butina algorithm applied to Morgan fingerprint Tanimoto distances. Molecules within the same cluster (more similar than `cutoff`) are kept together. The cluster sets are then assigned in order of decreasing size.
+
+```python
+dc.splits.ButinaSplitter(cutoff: float = 0.6)
+```
+
+Setting a smaller `cutoff` generates finer, tighter clusters; a larger value produces coarser groupings.
+
+```python
+splitter = dc.splits.ButinaSplitter(cutoff=0.6)
+train, test = splitter.train_test_split(dataset)
+```
+
+### FingerprintSplitter
+
+Assigns molecules to splits such that molecules in different splits are as dissimilar as possible (measured by ECFP4 Tanimoto similarity). This is a very stringent split that tests extrapolation across chemical space. Runtime scales as O(N²).
+
+```python
+splitter = dc.splits.FingerprintSplitter()
+train, valid, test = splitter.train_valid_test_split(dataset)
+```
+
+### IndexSplitter
+
+Divides the dataset by its existing order: the first `frac_train` fraction becomes training, the next `frac_valid` fraction becomes validation, and the remainder is the test set. Useful when the dataset is already time-ordered (e.g., molecules registered chronologically).
+
+```python
+dc.splits.IndexSplitter()
+```
+
+### SingletaskStratifiedSplitter
+
+Stratifies by the label distribution of a single task, ensuring each split contains a proportional number of active compounds. Useful for imbalanced classification datasets.
+
+```python
+dc.splits.SingletaskStratifiedSplitter(task_number: int = 0)
+```
+
+### RandomStratifiedSplitter
+
+Attempts proportional distribution of active compounds across all tasks in a multitask setting. The guarantee is strict only for single-task datasets; for multitask datasets it provides approximate balancing.
+
+```python
+dc.splits.RandomStratifiedSplitter()
+```
+
+## When to use each splitter
+
+<CardGroup cols={2}>
+  <Card title="RandomSplitter" icon="shuffle">
+    Baselines, sanity checks, or non-molecular tabular data. Do not use as the primary evaluation strategy for drug discovery models.
+  </Card>
+  <Card title="ScaffoldSplitter" icon="dna">
+    Standard choice for molecular property prediction benchmarks (MoleculeNet). Required whenever you need to estimate generalization to novel scaffolds.
+  </Card>
+  <Card title="ButinaSplitter" icon="diagram-project">
+    Alternative to ScaffoldSplitter when scaffold-level granularity is too coarse. Good for large, diverse datasets.
+  </Card>
+  <Card title="FingerprintSplitter" icon="fingerprint">
+    Maximum structural diversity between splits. Use when you want the hardest possible generalization test.
+  </Card>
+  <Card title="IndexSplitter" icon="clock">
+    Time-series or chronological data where order carries meaning.
+  </Card>
+  <Card title="SingletaskStratifiedSplitter" icon="scale-balanced">
+    Imbalanced single-task classification where you need balanced actives/inactives in each fold.
+  </Card>
+</CardGroup>
+
+## ScaffoldSplitter usage example
+
+```python
+import numpy as np
+import deepchem as dc
+
+# Dataset where ids are SMILES strings
+smiles = [
+    "CC(C)Cl", "CCC(C)CO", "CCCCCCCO", "CCCCCCCC(=O)OC",
+    "c3ccc2nc1ccccc1cc2c3", "Nc2cccc3nc1ccccc1cc23", "C1CCCCCC1",
+]
+Xs = np.zeros(len(smiles))
+Ys = np.ones(len(smiles))
+
+dataset = dc.data.DiskDataset.from_numpy(
+    X=Xs, y=Ys, w=np.zeros(len(smiles)), ids=smiles
+)
+
+splitter = dc.splits.ScaffoldSplitter()
+train, test = splitter.train_test_split(dataset)
+
+print("Train SMILES:", train.ids)
+print("Test SMILES:", test.ids)
+```
+
+## k-fold cross-validation
+
+All splitters support k-fold splitting via `k_fold_split()`, which returns a list of `(train, cv)` dataset pairs:
+
+```python
+splitter = dc.splits.RandomSplitter()
+folds = splitter.k_fold_split(dataset, k=5)
+for train_fold, cv_fold in folds:
+    model.fit(train_fold)
+    scores = model.evaluate(cv_fold, [metric])
+```
+
+<Warning>
+Random splits in drug discovery consistently overestimate model performance relative to what is observed on truly novel compounds in prospective experiments. For any work intended to guide synthesis decisions, always use `ScaffoldSplitter` or `ButinaSplitter` as the primary evaluation strategy. `RandomSplitter` results should be labelled as such and not treated as a proxy for generalization.
+</Warning>

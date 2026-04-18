@@ -1,0 +1,359 @@
+---
+title: "Dataset Classes — dc.data"
+description: "Reference for DeepChem's Dataset, NumpyDataset, DiskDataset, and ImageDataset classes including constructor parameters and key methods."
+---
+
+The `dc.data` module provides the core dataset abstractions used throughout DeepChem. Every dataset stores four aligned arrays — features `X`, labels `y`, sample weights `w`, and identifiers `ids` — and exposes a common iteration API so that models, transformers, and splitters can operate on any dataset type without caring whether data lives in memory or on disk.
+
+---
+
+## Dataset
+
+`Dataset` is the abstract base class for all DeepChem datasets. You cannot instantiate it directly; use one of the concrete subclasses below.
+
+### Properties
+
+<ParamField path="X" type="np.ndarray">
+  Feature array for the dataset. Shape is `(n_samples, ...)`. For disk-backed datasets, accessing this property loads all shards into memory and may be slow on large datasets; prefer `itersamples()` or `iterbatches()` instead.
+</ParamField>
+
+<ParamField path="y" type="np.ndarray">
+  Label array for the dataset. Shape is `(n_samples, ...)`. Has the same on-disk access caveat as `X`.
+</ParamField>
+
+<ParamField path="w" type="np.ndarray">
+  Per-sample (or per-sample-per-task) weight array. Shape is `(n_samples,)` for a single task or `(n_samples, n_tasks)` for multi-task datasets. Has the same on-disk access caveat as `X`.
+</ParamField>
+
+<ParamField path="ids" type="np.ndarray">
+  Sample identifier array of shape `(n_samples,)`. Has the same on-disk access caveat as `X`.
+</ParamField>
+
+### Methods
+
+#### `get_task_names()`
+
+Returns a `np.ndarray` of task names or integer task indices associated with this dataset.
+
+#### `get_shape()`
+
+Returns a 4-tuple `(X_shape, y_shape, w_shape, ids_shape)` describing the shape of each array. Unlike the property accessors, this never loads full data from disk.
+
+#### `itersamples()`
+
+Returns an iterator that yields one `(X, y, w, id)` tuple per sample. Each element is a numpy array (or scalar for `id`).
+
+```python
+import numpy as np
+import deepchem as dc
+
+dataset = dc.data.NumpyDataset(X=np.ones((3, 4)), y=np.array([0, 1, 0]))
+for x, y, w, sample_id in dataset.itersamples():
+    print(x.shape, y, w, sample_id)
+```
+
+#### `iterbatches(batch_size=None, epochs=1, deterministic=False, pad_batches=False)`
+
+Returns an iterator that yields `(X, y, w, ids)` tuples for minibatches.
+
+<ParamField path="batch_size" type="int" default="None">
+  Number of samples per batch. If `None`, the entire dataset is returned as a single batch.
+</ParamField>
+
+<ParamField path="epochs" type="int" default="1">
+  Number of times to iterate over the dataset.
+</ParamField>
+
+<ParamField path="deterministic" type="boolean" default="false">
+  If `True`, samples are returned in their original order. If `False`, a random permutation is used for each epoch.
+</ParamField>
+
+<ParamField path="pad_batches" type="boolean" default="false">
+  If `True`, the final batch of each epoch is padded (by repeating samples) to have exactly `batch_size` elements.
+</ParamField>
+
+#### `select(indices, select_dir=None)`
+
+Creates a new dataset containing only the samples at the given indices.
+
+<ParamField path="indices" type="Sequence[int] | np.ndarray" required>
+  List or array of integer indices to include in the new dataset.
+</ParamField>
+
+<ParamField path="select_dir" type="string">
+  For `DiskDataset`, the directory path where the selected dataset will be written. Ignored by `NumpyDataset`.
+</ParamField>
+
+---
+
+## NumpyDataset
+
+`NumpyDataset` stores all data in RAM as numpy arrays. It is the most convenient dataset type for small to medium datasets that fit in memory.
+
+### Constructor
+
+```python
+dc.data.NumpyDataset(X, y=None, w=None, ids=None, n_tasks=1)
+```
+
+<ParamField path="X" type="np.ndarray" required>
+  Input features. A numpy array of shape `(n_samples, ...)`. Any array-like that can be converted with `np.array()` is also accepted.
+</ParamField>
+
+<ParamField path="y" type="np.ndarray" default="None">
+  Labels. A numpy array of shape `(n_samples, ...)`. When `None`, labels are initialized to zeros of shape `(n_samples, n_tasks)` and weights are set to zero.
+</ParamField>
+
+<ParamField path="w" type="np.ndarray" default="None">
+  Sample weights. Should be 1-D of shape `(n_samples,)` for a single task or 2-D of shape `(n_samples, n_tasks)` for multi-task settings. When `None`, weights default to all ones.
+</ParamField>
+
+<ParamField path="ids" type="np.ndarray" default="None">
+  Sample identifiers. A 1-D array of shape `(n_samples,)`. When `None`, integer indices `0, 1, ..., n_samples-1` are used.
+</ParamField>
+
+<ParamField path="n_tasks" type="integer" default="1">
+  Number of learning tasks. This is used only to set the default shape of `y` when `y=None`.
+</ParamField>
+
+### Code example
+
+```python
+import numpy as np
+import deepchem as dc
+
+X = np.random.rand(5, 3)
+y = np.random.rand(5,)
+ids = np.arange(5)
+
+dataset = dc.data.NumpyDataset(X=X, y=y, ids=ids)
+print(dataset.X.shape)   # (5, 3)
+print(dataset.y.shape)   # (5,)
+print(len(dataset))      # 5
+```
+
+### Class methods
+
+#### `NumpyDataset.from_DiskDataset(ds)`
+
+Converts a `DiskDataset` to a `NumpyDataset` by loading all shards into memory.
+
+<ParamField path="ds" type="DiskDataset" required>
+  The `DiskDataset` to convert.
+</ParamField>
+
+Returns a new `NumpyDataset`.
+
+#### `NumpyDataset.merge(datasets)`
+
+Concatenates a list of datasets into a single `NumpyDataset`.
+
+<ParamField path="datasets" type="List[Dataset]" required>
+  Sequence of datasets whose `X`, `y`, `w`, and `ids` arrays will be concatenated along the sample axis.
+</ParamField>
+
+Returns a new `NumpyDataset`.
+
+```python
+import numpy as np
+import deepchem as dc
+
+X1, y1 = np.random.rand(5, 3), np.random.randn(5, 1)
+X2, y2 = np.random.rand(5, 3), np.random.randn(5, 1)
+first_dataset = dc.data.NumpyDataset(X1, y1)
+second_dataset = dc.data.NumpyDataset(X2, y2)
+merged = dc.data.NumpyDataset.merge([first_dataset, second_dataset])
+print(len(merged))  # 10
+```
+
+### Instance methods
+
+#### `get_shape()`
+
+Returns `(X_shape, y_shape, w_shape, ids_shape)` as a 4-tuple of tuples.
+
+#### `make_pytorch_dataset(epochs=1, deterministic=False, batch_size=None)`
+
+Creates a `torch.utils.data.IterableDataset` that iterates over this dataset. Requires PyTorch to be installed.
+
+<ParamField path="epochs" type="integer" default="1">
+  Number of times to iterate over the dataset.
+</ParamField>
+
+<ParamField path="deterministic" type="boolean" default="false">
+  If `True`, the data is returned in a fixed order.
+</ParamField>
+
+<ParamField path="batch_size" type="integer" default="None">
+  Number of samples per iteration. If `None`, each iteration returns a single sample.
+</ParamField>
+
+---
+
+## DiskDataset
+
+`DiskDataset` stores data on disk as a set of numpy `.npy` shard files. It is the workhorse for large datasets that do not fit into RAM.
+
+On disk a `DiskDataset` has the following layout inside its `data_dir`:
+
+```
+data_dir/
+├── metadata.csv.gzip
+├── tasks.json
+├── shard-0-X.npy
+├── shard-0-y.npy
+├── shard-0-w.npy
+├── shard-0-ids.npy
+├── shard-1-X.npy
+└── ...
+```
+
+<Note>
+  Accessing `dataset.X`, `dataset.y`, or `dataset.w` on a large `DiskDataset` loads all shards into memory. Use `itersamples()` or `iterbatches()` to iterate without materialising the full dataset.
+</Note>
+
+### Loading an existing dataset
+
+```python
+import deepchem as dc
+
+dataset = dc.data.DiskDataset("/path/to/my/data_dir")
+```
+
+### Factory methods
+
+#### `DiskDataset.from_numpy(X, y=None, w=None, ids=None, tasks=None, data_dir=None)`
+
+Creates a `DiskDataset` from numpy arrays. A temporary directory is used if `data_dir` is not supplied.
+
+<ParamField path="X" type="np.ndarray" required>
+  Feature array of shape `(n_samples, ...)`.
+</ParamField>
+
+<ParamField path="y" type="np.ndarray" default="None">
+  Label array.
+</ParamField>
+
+<ParamField path="w" type="np.ndarray" default="None">
+  Weight array.
+</ParamField>
+
+<ParamField path="ids" type="np.ndarray" default="None">
+  Identifier array.
+</ParamField>
+
+<ParamField path="tasks" type="Sequence" default="None">
+  Task names. Inferred from `y` when `None`.
+</ParamField>
+
+<ParamField path="data_dir" type="string" default="None">
+  Directory in which to write the dataset files. A `tempfile.mkdtemp()` directory is used if omitted.
+</ParamField>
+
+```python
+import numpy as np
+import deepchem as dc
+
+X = np.random.rand(10, 10)
+dataset = dc.data.DiskDataset.from_numpy(X)
+print(dataset.X.shape)  # (10, 10)
+```
+
+#### `DiskDataset.create_dataset(shard_generator, data_dir=None, tasks=None)`
+
+Creates a `DiskDataset` from a generator that yields `(X, y, w, ids)` tuples (one tuple per shard).
+
+<ParamField path="shard_generator" type="Iterable[Batch]" required>
+  An iterable or generator that produces `(X, y, w, ids)` tuples. Each tuple is written to a separate shard file.
+</ParamField>
+
+<ParamField path="data_dir" type="string" default="None">
+  Directory to write the dataset to. A temporary directory is used if omitted.
+</ParamField>
+
+<ParamField path="tasks" type="Sequence" default="None">
+  Task names. Inferred from `y` in the first shard when `None`.
+</ParamField>
+
+### Key instance methods
+
+- **`reshard(shard_size)`** — Re-writes the dataset on disk with a new shard size.
+- **`move(new_data_dir, delete_if_exists=True)`** — Moves the dataset directory on disk; updates `self.data_dir` in place.
+- **`copy(new_data_dir)`** — Deep-copies the dataset to a new directory and returns a new `DiskDataset`.
+- **`merge(datasets, merge_dir=None)`** — Static method that concatenates multiple datasets into a single `DiskDataset`.
+
+---
+
+## ImageDataset
+
+`ImageDataset` is a lightweight dataset type for image-based inputs. It holds the features as either a numpy array of pixel values or a list of image file paths, loading them lazily from disk when accessed.
+
+### Constructor
+
+```python
+dc.data.ImageDataset(X, y, w=None, ids=None)
+```
+
+<ParamField path="X" type="np.ndarray | List[str]" required>
+  Image data. Either a numpy array of shape `(n_samples, height, width, ...)` containing pixel values directly, or a list of paths to `.png` or `.tif` image files.
+</ParamField>
+
+<ParamField path="y" type="np.ndarray | List[str]" required>
+  Labels. Either a numpy array of label values or a list of paths to label image files (for tasks like image segmentation).
+</ParamField>
+
+<ParamField path="w" type="np.ndarray" default="None">
+  Per-sample weights. When `None`, weights default to all ones.
+</ParamField>
+
+<ParamField path="ids" type="np.ndarray" default="None">
+  Sample identifiers. When `None`, the file paths (or integer indices) are used as identifiers.
+</ParamField>
+
+<Tip>
+  Use `dc.data.ImageLoader` to construct an `ImageDataset` from a directory or zip file of images rather than instantiating `ImageDataset` directly.
+</Tip>
+
+---
+
+## Helper functions
+
+The following module-level functions in `dc.data` assist with batch padding and feature density conversions.
+
+### `pad_batch(batch_size, X_b, y_b, w_b, ids_b)`
+
+Pads a batch of arrays to have exactly `batch_size` samples by repeating elements in a tiled fashion. All four input arrays must have the same length.
+
+<ParamField path="batch_size" type="integer" required>
+  The target number of samples.
+</ParamField>
+
+<ParamField path="X_b" type="np.ndarray" required>
+  Feature batch. `len(X_b)` must be `<= batch_size`.
+</ParamField>
+
+<ParamField path="y_b" type="np.ndarray" required>
+  Label batch.
+</ParamField>
+
+<ParamField path="w_b" type="np.ndarray" required>
+  Weight batch.
+</ParamField>
+
+<ParamField path="ids_b" type="np.ndarray" required>
+  Identifier batch.
+</ParamField>
+
+Returns a `Batch` tuple `(X_out, y_out, w_out, ids_out)` each with `len == batch_size`.
+
+### `pad_features(batch_size, X_b)`
+
+Pads only a feature array to `batch_size` length. Intended for inference-time query processing where labels and weights are not available.
+
+### `sparsify_features(X)`
+
+Converts a dense numpy array `X` of shape `(n_samples, ...)` into a sparse representation. Returns a numpy object array where `result[i]` is a tuple `(nonzero_inds, nonzero_vals)`.
+
+### `densify_features(X_sparse, num_features)`
+
+Reconstructs a dense `(n_samples, num_features)` array from a sparse representation produced by `sparsify_features`. Only supports 1-D feature vectors per sample.

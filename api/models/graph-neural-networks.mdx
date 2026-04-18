@@ -1,0 +1,355 @@
+---
+title: "Graph Neural Network Models — dc.models"
+description: "Reference for DeepChem's GCN, GAT, AttentiveFP, DMPNN, Weave, and MPNN graph neural network models for molecular property prediction."
+---
+
+Graph neural network (GNN) models in DeepChem treat molecules as graphs where atoms are nodes and bonds are edges. Rather than relying on hand-crafted fingerprints, GNNs learn representations through iterative message passing: each atom aggregates information from its neighbors, building up a context-aware embedding that is then pooled to a graph-level vector for property prediction. DeepChem's GNN models are built on PyTorch and typically require the DGL and DGL-LifeSci libraries.
+
+<Note>
+  All GNN models described on this page require PyTorch. Most also depend on DGL (`pip install dgl dgllife`). `DMPNNModel` additionally requires PyTorch Geometric (`pip install torch-geometric`).
+</Note>
+
+---
+
+## GCNModel
+
+`dc.models.GCNModel` implements the Graph Convolutional Network architecture from Kipf & Welling (2017). Node features are updated through shared-weight graph convolutions, and a gated pooling mechanism produces the final graph-level representation.
+
+**Required featurizer:** `dc.feat.MolGraphConvFeaturizer`
+
+### Parameters
+
+<ParamField path="n_tasks" type="number" required>
+  Number of prediction tasks.
+</ParamField>
+
+<ParamField path="graph_conv_layers" type="number[]" default="[64, 64]">
+  Width of each GCN hidden layer. The list length determines the number of graph convolution layers.
+</ParamField>
+
+<ParamField path="activation" type="callable" default="None">
+  Activation function applied to each GCN layer output. When `None`, no activation is applied.
+</ParamField>
+
+<ParamField path="residual" type="boolean" default="true">
+  Whether to add a residual (skip) connection within each GCN layer.
+</ParamField>
+
+<ParamField path="batchnorm" type="boolean" default="false">
+  Whether to apply batch normalization after each GCN layer.
+</ParamField>
+
+<ParamField path="dropout" type="number" default="0.0">
+  Dropout probability applied to the output of each GCN layer.
+</ParamField>
+
+<ParamField path="predictor_hidden_feats" type="number" default="128">
+  Hidden layer size in the output MLP predictor head.
+</ParamField>
+
+<ParamField path="predictor_dropout" type="number" default="0.0">
+  Dropout probability in the MLP predictor head.
+</ParamField>
+
+<ParamField path="mode" type="string" default="regression">
+  Model objective. Either `'regression'` or `'classification'`.
+</ParamField>
+
+<ParamField path="number_atom_features" type="number" default="30">
+  Length of the initial atom feature vectors produced by the featurizer.
+</ParamField>
+
+<ParamField path="n_classes" type="number" default="2">
+  Number of classes per task. Only used when `mode='classification'`.
+</ParamField>
+
+<ParamField path="self_loop" type="boolean" default="true">
+  Whether to add self-loop edges during graph construction. Recommended for isolated atoms.
+</ParamField>
+
+<ParamField path="model_dir" type="string">
+  Directory for saving checkpoints. A temporary directory is used when not specified.
+</ParamField>
+
+### Example
+
+```python
+import deepchem as dc
+
+smiles = ["C1CCC1", "CCC"]
+labels = [0., 1.]
+
+featurizer = dc.feat.MolGraphConvFeaturizer()
+X = featurizer.featurize(smiles)
+dataset = dc.data.NumpyDataset(X=X, y=labels)
+
+model = dc.models.GCNModel(
+    n_tasks=1,
+    mode='classification',
+    graph_conv_layers=[64, 64],
+    dropout=0.1,
+    batch_size=16,
+    learning_rate=0.001,
+)
+loss = model.fit(dataset, nb_epoch=5)
+```
+
+---
+
+## GATModel
+
+`dc.models.GATModel` implements the Graph Attention Network from Veličković et al. (2018). Multi-head attention replaces the uniform neighbor aggregation of GCN, allowing the model to learn which neighboring atoms are most relevant.
+
+**Required featurizer:** `dc.feat.MolGraphConvFeaturizer`
+
+### Parameters
+
+<ParamField path="n_tasks" type="number" required>
+  Number of prediction tasks.
+</ParamField>
+
+<ParamField path="graph_attention_layers" type="number[]" default="[8, 8]">
+  Width of channels per attention head for each GAT layer.
+</ParamField>
+
+<ParamField path="n_attention_heads" type="number" default="8">
+  Number of attention heads in each GAT layer.
+</ParamField>
+
+<ParamField path="agg_modes" type="string[]">
+  How to aggregate multi-head results per layer: `'flatten'` (concatenate) or `'mean'`. If not specified, intermediate layers flatten and the final layer takes the mean.
+</ParamField>
+
+<ParamField path="activation" type="callable" default="F.elu">
+  Activation applied after multi-head aggregation in each layer. Defaults to ELU.
+</ParamField>
+
+<ParamField path="residual" type="boolean" default="true">
+  Whether to use residual connections within each GAT layer.
+</ParamField>
+
+<ParamField path="dropout" type="number" default="0.0">
+  Dropout probability within each GAT layer.
+</ParamField>
+
+<ParamField path="alpha" type="number" default="0.2">
+  Negative slope coefficient for the LeakyReLU used in the attention mechanism.
+</ParamField>
+
+<ParamField path="mode" type="string" default="regression">
+  Model objective. Either `'regression'` or `'classification'`.
+</ParamField>
+
+<ParamField path="number_atom_features" type="number" default="30">
+  Length of the initial atom feature vectors.
+</ParamField>
+
+<ParamField path="n_classes" type="number" default="2">
+  Number of classes per task (classification mode only).
+</ParamField>
+
+### Example
+
+```python
+import deepchem as dc
+
+tasks, datasets, transformers = dc.molnet.load_bbbp()
+train, valid, test = datasets
+
+model = dc.models.GATModel(
+    n_tasks=len(tasks),
+    mode='classification',
+    n_attention_heads=8,
+    graph_attention_layers=[8, 8],
+    dropout=0.1,
+    learning_rate=0.001,
+)
+model.fit(train, nb_epoch=50)
+```
+
+---
+
+## AttentiveFPModel
+
+`dc.models.AttentiveFPModel` implements Attentive FP (Xiong et al., 2020). It initializes node representations by combining atom and bond features through a round of message passing, then refines them with a gated recurrent unit (GRU) for graph-level aggregation.
+
+**Required featurizer:** `dc.feat.MolGraphConvFeaturizer(use_edges=True)` — edge features are required by this model.
+
+### Parameters
+
+<ParamField path="n_tasks" type="number" required>
+  Number of prediction tasks.
+</ParamField>
+
+<ParamField path="num_layers" type="number" default="2">
+  Number of graph neural network layers (rounds of message passing).
+</ParamField>
+
+<ParamField path="num_timesteps" type="number" default="2">
+  Number of GRU time steps for updating the graph-level representation.
+</ParamField>
+
+<ParamField path="graph_feat_size" type="number" default="200">
+  Dimensionality of graph-level representations.
+</ParamField>
+
+<ParamField path="dropout" type="number" default="0.0">
+  Dropout probability.
+</ParamField>
+
+<ParamField path="mode" type="string" default="regression">
+  Model objective. Either `'regression'` or `'classification'`.
+</ParamField>
+
+<ParamField path="number_atom_features" type="number" default="30">
+  Length of the initial atom feature vectors.
+</ParamField>
+
+<ParamField path="number_bond_features" type="number" default="11">
+  Length of the initial bond feature vectors.
+</ParamField>
+
+<ParamField path="n_classes" type="number" default="2">
+  Number of classes per task (classification mode only).
+</ParamField>
+
+### Example
+
+```python
+import deepchem as dc
+
+smiles = ["C1CCC1", "C1=CC=CN=C1"]
+labels = [1.5, 2.3]
+
+# use_edges=True is required for AttentiveFP
+featurizer = dc.feat.MolGraphConvFeaturizer(use_edges=True)
+X = featurizer.featurize(smiles)
+dataset = dc.data.NumpyDataset(X=X, y=labels)
+
+model = dc.models.AttentiveFPModel(
+    n_tasks=1,
+    mode='regression',
+    num_layers=2,
+    num_timesteps=2,
+    graph_feat_size=200,
+    dropout=0.1,
+)
+loss = model.fit(dataset, nb_epoch=30)
+```
+
+---
+
+## DMPNNModel
+
+`dc.models.DMPNNModel` implements the Directed Message Passing Neural Network (DMPNN) from Yang et al. (2019). Unlike undirected message passing, DMPNN encodes each bond as two directed edges and propagates messages along directed paths, reducing information from the reverse bond during aggregation.
+
+**Required featurizer:** `dc.feat.DMPNNFeaturizer`
+
+<Warning>
+  DMPNNModel requires PyTorch Geometric in addition to PyTorch. Install it with `pip install torch-geometric` before using this model.
+</Warning>
+
+### Parameters
+
+<ParamField path="mode" type="string" default="regression">
+  Model objective: `'regression'` or `'classification'`.
+</ParamField>
+
+<ParamField path="n_tasks" type="number" default="1">
+  Number of prediction tasks.
+</ParamField>
+
+<ParamField path="n_classes" type="number" default="3">
+  Number of classes per task (classification mode only).
+</ParamField>
+
+<ParamField path="global_features_size" type="number" default="0">
+  Size of the optional global molecular feature vector appended after message passing. Set to the output dimension of any global featurizers used by `DMPNNFeaturizer`.
+</ParamField>
+
+<ParamField path="depth" type="number" default="3">
+  Number of directed message passing steps.
+</ParamField>
+
+<ParamField path="enc_hidden" type="number" default="300">
+  Hidden layer size in the encoder.
+</ParamField>
+
+<ParamField path="ffn_layers" type="number" default="3">
+  Number of layers in the feed-forward network head.
+</ParamField>
+
+<ParamField path="ffn_dropout_p" type="number" default="0.0">
+  Dropout probability in the feed-forward network head.
+</ParamField>
+
+### Example
+
+```python
+import deepchem as dc
+import os
+
+input_file = 'molecules.csv'  # CSV with 'smiles' and 'y' columns
+loader = dc.data.CSVLoader(
+    tasks=['y'],
+    feature_field='smiles',
+    featurizer=dc.feat.DMPNNFeaturizer(),
+)
+dataset = loader.create_dataset(input_file)
+
+model = dc.models.DMPNNModel(
+    mode='regression',
+    n_tasks=1,
+    depth=3,
+    enc_hidden=300,
+)
+loss = model.fit(dataset, nb_epoch=30)
+```
+
+---
+
+## WeaveModel
+
+`dc.models.WeaveModel` implements the Weave architecture (Kearnes et al., 2016), which explicitly models both atom features and pair (bond) features and passes messages between them. It uses a graph convolution over atom–atom and atom–pair interactions.
+
+**Required featurizer:** `dc.feat.WeaveFeaturizer`
+
+```python
+import deepchem as dc
+
+featurizer = dc.feat.WeaveFeaturizer()
+loader = dc.data.CSVLoader(
+    tasks=['activity'],
+    feature_field='smiles',
+    featurizer=featurizer,
+)
+dataset = loader.create_dataset('molecules.csv')
+
+model = dc.models.WeaveModel(n_tasks=1, mode='classification')
+model.fit(dataset, nb_epoch=30)
+```
+
+---
+
+## DTNNModel
+
+`dc.models.DTNNModel` implements the Deep Tensor Neural Network (Schütt et al., 2017) designed for quantum chemistry. It represents interactions between all atom pairs using a tensor decomposition of the Coulomb matrix, making it well-suited for predicting quantum mechanical properties such as atomization energies.
+
+**Required featurizer:** `dc.feat.CoulombMatrix` or `dc.feat.CoulombMatrixEig`
+
+```python
+import deepchem as dc
+
+tasks, datasets, transformers = dc.molnet.load_qm7()
+train, valid, test = datasets
+
+model = dc.models.DTNNModel(
+    n_tasks=len(tasks),
+    mode='regression',
+)
+model.fit(train, nb_epoch=50)
+```
+
+<Tip>
+  For quantum chemistry datasets like QM7, QM8, and QM9, apply a `dc.trans.NormalizationTransformer` to the labels before training. Pass the same transformer list to `model.predict` and `model.evaluate` to undo the normalization.
+</Tip>

@@ -1,0 +1,181 @@
+---
+title: "DeepChem Models: Architecture and Training"
+description: "DeepChem provides 60+ models for molecular property prediction, generation, and quantum chemistry across PyTorch, TensorFlow, and JAX."
+---
+
+DeepChem's `Model` class is the unified base that every concrete model in the library extends. It defines a consistent training and evaluation interface regardless of the underlying deep learning backend, so the same workflow applies whether you are using a graph convolutional network, a random forest wrapper, or a transformer model.
+
+## The Model base class
+
+`dc.models.Model` is an abstract class defined in `deepchem/models/models.py`. Its constructor accepts a `model_dir` path where checkpoints are saved; if none is provided, a temporary directory is created automatically.
+
+```python
+class Model:
+    def __init__(self, model=None, model_dir: Optional[str] = None, **kwargs): ...
+
+    def fit(self, dataset: Dataset) -> float: ...
+    def predict(self, dataset: Dataset, transformers: List[Transformer] = []) -> np.ndarray: ...
+    def evaluate(self, dataset: Dataset, metrics: List[Metric],
+                 transformers: List[Transformer] = [],
+                 per_task_metrics: bool = False,
+                 use_sample_weights: bool = False,
+                 n_classes: int = 2) -> dict: ...
+    def save(self) -> None: ...
+    def reload(self) -> None: ...
+```
+
+`predict()` returns a numpy array of predictions. It automatically reverses any transformations that were applied to labels by passing the same transformer list used during training.
+
+`evaluate()` wraps the internal `Evaluator` utility and returns a dictionary mapping metric names to scores. Pass `per_task_metrics=True` to receive per-task breakdowns on multitask datasets.
+
+## Backend breakdown
+
+<CardGroup cols={2}>
+  <Card title="TorchModel" icon="fire">
+    The primary base class for PyTorch-backed models. Extends `Model` with PyTorch training loops, gradient clipping, learning rate schedulers, and checkpoint management. Most modern DeepChem models (GCN, GAT, AttentiveFP, DMPNN, etc.) subclass `TorchModel`.
+
+    ```python
+    from deepchem.models import TorchModel
+    ```
+  </Card>
+  <Card title="KerasModel" icon="layer-group">
+    Base class for TensorFlow/Keras-backed models. Supports Tensorboard logging. Used by legacy models including `GraphConvModel`, `MPNNModel`, `TextCNNModel`, and `SeqToSeq`.
+
+    ```python
+    from deepchem.models import KerasModel
+    ```
+  </Card>
+  <Card title="SklearnModel" icon="tree">
+    Wraps any scikit-learn estimator (e.g., `RandomForestClassifier`) so it can be used with the DeepChem `Dataset` API and splitters.
+
+    ```python
+    from deepchem.models import SklearnModel
+    ```
+  </Card>
+  <Card title="GBDTModel" icon="chart-line">
+    Wraps gradient-boosted tree libraries (XGBoost, LightGBM). Provides the same `fit()` / `predict()` / `evaluate()` interface.
+
+    ```python
+    from deepchem.models import GBDTModel
+    ```
+  </Card>
+</CardGroup>
+
+A `JaxModel` base class is also available for JAX-backed models (`PINNModel`), loaded conditionally when JAX is installed.
+
+## Parameters shared by deep learning models
+
+The following parameters appear in most `TorchModel` and `KerasModel` subclasses:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `n_tasks` | `int` | Number of learning tasks (output size) |
+| `mode` | `str` | `'classification'` or `'regression'` |
+| `model_dir` | `str` | Directory for saving checkpoints |
+| `batch_size` | `int` | Training batch size (default 100) |
+| `learning_rate` | `float` | Initial learning rate |
+| `n_classes` | `int` | Number of classes per task (classification only) |
+
+## Training with fit()
+
+`fit()` trains for a specified number of epochs and returns the final training loss. For `TorchModel` and `KerasModel`, additional arguments control checkpointing and callbacks:
+
+```python
+model.fit(
+    dataset: Dataset,
+    nb_epoch: int = 10,
+    max_checkpoints_to_keep: int = 5,
+    checkpoint_interval: int = 1000,
+    deterministic: bool = False,
+    restore: bool = False,
+    callbacks: Union[Callable, List[Callable]] = [],
+    all_losses: Optional[List[float]] = None,
+) -> float
+```
+
+## Monitoring validation with ValidationCallback
+
+`ValidationCallback` can be passed to `fit()` as a callback. It evaluates metrics on a held-out validation set at a fixed interval and optionally saves the best checkpoint to disk.
+
+```python
+dc.models.ValidationCallback(
+    dataset,        # validation Dataset
+    interval,       # evaluate every `interval` training steps
+    metrics,        # list of dc.metrics.Metric objects
+    output_file=sys.stdout,
+    save_dir=None,  # directory to write best model parameters
+    save_metric=0,  # index of the metric to track
+    save_on_minimum=True,
+    transformers=[],
+)
+```
+
+## Experiment tracking with WandbLogger
+
+`dc.models.WandbLogger` integrates with Weights & Biases. Pass it as the `wandb_logger` argument when constructing a `TorchModel` to automatically log training loss, validation metrics, and hyperparameters.
+
+```python
+from deepchem.models import WandbLogger
+logger = WandbLogger(project="my-deepchem-project")
+model = dc.models.GCNModel(n_tasks=1, mode='classification', wandb_logger=logger)
+```
+
+## Full example: training and evaluating GCNModel
+
+```python
+import numpy as np
+import deepchem as dc
+from deepchem.models import GCNModel
+
+# 1. Featurize molecules into graph representations
+smiles = ["C1CCC1", "CCC", "c1ccccc1", "CCO", "CC(=O)O"]
+labels = [0.0, 1.0, 0.0, 1.0, 1.0]
+
+featurizer = dc.feat.MolGraphConvFeaturizer()
+X = featurizer.featurize(smiles)
+dataset = dc.data.NumpyDataset(X=X, y=np.array(labels))
+
+# 2. Split into train/test
+splitter = dc.splits.RandomSplitter()
+train, test = splitter.train_test_split(dataset, frac_train=0.8)
+
+# 3. Instantiate and train GCNModel
+model = GCNModel(
+    n_tasks=1,
+    mode='classification',
+    batch_size=16,
+    learning_rate=0.001,
+)
+loss = model.fit(train, nb_epoch=50)
+print(f"Final training loss: {loss:.4f}")
+
+# 4. Evaluate on the test set
+metric = dc.metrics.Metric(dc.metrics.roc_auc_score)
+scores = model.evaluate(test, [metric])
+print(scores)   # {'roc_auc_score': ...}
+
+# 5. Predict on new molecules
+predictions = model.predict(test)
+print(predictions.shape)   # (n_test_samples, n_tasks, n_classes)
+```
+
+<Info>
+`GCNModel` requires DGL and DGL-LifeSci. Install with `pip install dgl dgllife` for your CUDA version. The `MolGraphConvFeaturizer` used here is independent of DGL and only requires RDKit.
+</Info>
+
+## Other notable model families
+
+<CardGroup cols={2}>
+  <Card title="GATModel / AttentiveFPModel" icon="share-nodes">
+    Graph attention networks for molecular property prediction. Use `MolGraphConvFeaturizer` for input. PyTorch-backed.
+  </Card>
+  <Card title="DMPNNModel" icon="arrows-spin">
+    Directed message passing network. Use `DMPNNFeaturizer`. Requires `torch_geometric`. PyTorch-backed.
+  </Card>
+  <Card title="MultitaskRegressor / MultitaskClassifier" icon="list-check">
+    Fully connected networks for multi-task prediction on fixed-length vectors. No graph dependency.
+  </Card>
+  <Card title="HuggingFaceModel / Chemberta" icon="robot">
+    Transformer-based models for SMILES sequence modeling. Wraps HuggingFace models in the DeepChem API.
+  </Card>
+</CardGroup>

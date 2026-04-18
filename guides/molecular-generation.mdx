@@ -1,0 +1,185 @@
+---
+title: "Generating Novel Molecules with DeepChem"
+description: "Generate novel drug-like molecules using DeepChem's MolGAN, SeqToSeq, and reinforcement learning models for goal-directed de novo molecular design."
+---
+
+De novo molecular design uses deep generative models to propose new chemical structures with desired properties, rather than searching an enumerated library. DeepChem provides several complementary approaches: graph-based GANs that generate molecular connectivity directly, sequence-to-sequence models that translate between molecular representations, and reinforcement learning agents that optimize molecules toward target objectives.
+
+## Generative approaches in DeepChem
+
+<CardGroup cols={2}>
+  <Card title="BasicMolGANModel" icon="shuffle">
+    GAN operating directly on molecular graph data (adjacency matrix + node features). Uses Wasserstein GAN (WGAN) training for stability. Generates small drug-like molecules up to 9 atoms. Can incorporate an RL reward to bias generation toward desired properties.
+  </Card>
+  <Card title="SeqToSeq" icon="right-left">
+    GRU-based encoder–decoder for SMILES sequence translation. Can be used as a variational autoencoder by adding a `VariationalRandomizer` layer. Useful for SMILES-to-SMILES translation, scaffold hopping, and latent space interpolation.
+  </Card>
+  <Card title="GAN / WGAN" icon="chart-line">
+    Base `GAN` and `WGAN` classes support arbitrary generator and discriminator architectures. Subclass them to implement custom conditional or unconditional molecular generation pipelines.
+  </Card>
+  <Card title="PPO / A2C (RL)" icon="trophy">
+    Proximal Policy Optimization (`PPO`) and Advantage Actor-Critic (`A2C`) agents for goal-directed generation. The policy network modifies a molecule step-by-step and receives a reward from a scoring function (e.g., QED, docking score).
+  </Card>
+</CardGroup>
+
+## MolGAN-based molecular generation
+
+`BasicMolGANModel` (in `deepchem.models.molgan`) inherits from `WGAN` and generates molecular graphs via a GAN trained on one-hot adjacency tensors and node feature tensors.
+
+<Steps>
+  <Step title="Featurize training molecules with MolGanFeaturizer">
+    `MolGanFeaturizer` converts SMILES strings into `GraphMatrix` objects containing an adjacency matrix and node feature matrix. Invalid molecules return `None` and should be filtered out.
+
+    ```python
+    import deepchem as dc
+
+    smiles = ['CCC', 'C1=CC=CC=C1', 'CNC', 'CC(=O)O', 'c1cccnc1']
+    feat = dc.feat.MolGanFeaturizer()
+    features = feat.featurize(smiles)
+    # Remove failed featurizations
+    features = [f for f in features if f is not None]
+    print(f"{len(features)} molecules featurized successfully")
+    ```
+  </Step>
+  <Step title="Build the dataset and train BasicMolGANModel">
+    `BasicMolGANModel` expects two inputs per sample: the adjacency matrix and the node feature matrix. Wrap them in a `NumpyDataset` and use `fit_gan()` with a batch iterator that one-hot encodes the inputs.
+
+    ```python
+    import deepchem as dc
+    from deepchem.models import BasicMolGANModel as MolGAN
+    from deepchem.models.optimizers import ExponentialDecay
+    from tensorflow import one_hot
+
+    gan = MolGAN(learning_rate=ExponentialDecay(0.001, 0.9, 5000))
+
+    dataset = dc.data.NumpyDataset(
+        X=[f.adjacency_matrix for f in features],
+        y=[f.node_features    for f in features],
+    )
+
+    def iterbatches(epochs):
+        for _ in range(epochs):
+            for batch in dataset.iterbatches(
+                batch_size=gan.batch_size, pad_batches=True
+            ):
+                adjacency_tensor = one_hot(batch[0], gan.edges)
+                node_tensor      = one_hot(batch[1], gan.nodes)
+                yield {
+                    gan.data_inputs[0]: adjacency_tensor,
+                    gan.data_inputs[1]: node_tensor,
+                }
+
+    gan.fit_gan(
+        iterbatches(8),
+        generator_steps=0.2,
+        checkpoint_interval=5000,
+    )
+    ```
+  </Step>
+  <Step title="Generate new molecules and decode back to SMILES">
+    Call `predict_gan_generator()` to sample from the generator, then use `MolGanFeaturizer.defeaturize()` to convert graph tensors back to RDKit molecules.
+
+    ```python
+    generated_data = gan.predict_gan_generator(1000)
+
+    # Decode graph tensors to RDKit molecules
+    nmols = feat.defeaturize(generated_data)
+    print(f"{len(nmols)} molecules generated")
+
+    # Filter invalid molecules
+    valid_mols = [m for m in nmols if m is not None]
+    print(f"{len(valid_mols)} valid molecules")
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  MolGAN training can be unstable, and it is common to see 0 valid molecules during early training. Monitor training with longer runs and lower generator step fractions (e.g., `generator_steps=0.1`).
+</Note>
+
+## SeqToSeq for SMILES translation
+
+`SeqToSeq` implements a GRU encoder–decoder. For molecular generation, train it as a SMILES autoencoder to learn a continuous latent space, then sample and decode new points.
+
+```python
+import deepchem as dc
+
+smiles_list = ['CC', 'CCC', 'CCCC', 'c1ccccc1', 'CCO']
+
+# Build token vocabulary from SMILES characters
+tokens = set()
+for smi in smiles_list:
+    tokens.update(smi)
+tokens = sorted(tokens)
+
+model = dc.models.SeqToSeq(
+    input_tokens=tokens,
+    output_tokens=tokens,
+    max_output_length=20,
+    encoder_layers=2,
+    decoder_layers=2,
+    embedding_dimension=128,
+    learning_rate=1e-3,
+)
+
+# Training: provide (input_sequence, output_sequence) pairs
+def generate_sequences(smiles, epochs):
+    for _ in range(epochs):
+        for smi in smiles:
+            yield (list(smi), list(smi))
+
+model.fit_sequences(generate_sequences(smiles_list, 100))
+```
+
+## RL-based molecular optimization
+
+DeepChem's `PPO` and `A2C` agents in `deepchem.rl` support goal-directed molecular generation by framing it as a sequential decision-making problem. At each step the agent adds an atom or bond to a partial molecule, and a scoring function (e.g., QED, penalized logP, or a trained property predictor) provides the reward.
+
+```python
+# Pseudocode — a concrete environment must implement dc.rl.Environment
+import deepchem as dc
+
+# Define your molecular environment (atom addition, bond formation, etc.)
+# env = MolecularEnvironment(...)
+
+# Policy and value networks
+# policy = YourPolicyNetwork(...)
+
+# Train with PPO
+# agent = dc.rl.PPO(env, policy, max_rollout_length=20, ...)
+# agent.fit(1000000)
+```
+
+<Note>
+  DeepChem's `dc.rl.PPO` and `dc.rl.A2C` require you to implement a custom `dc.rl.Environment` subclass that defines the action space (e.g., fragment addition) and the reward function (e.g., docking score or QED).
+</Note>
+
+## Validating generated molecules with RDKit
+
+Always filter generated molecules for chemical validity before downstream use.
+
+```python
+from rdkit import Chem
+from rdkit.Chem import Descriptors
+
+def is_valid(mol):
+    """Return True if mol is a non-None, sanitizable RDKit molecule."""
+    if mol is None:
+        return False
+    try:
+        Chem.SanitizeMol(mol)
+        return True
+    except Exception:
+        return False
+
+valid_mols = [m for m in valid_mols if is_valid(m)]
+
+# Optionally compute QED as a drug-likeness filter
+from rdkit.Chem import QED
+druglike = [m for m in valid_mols if QED.qed(m) > 0.5]
+print(f"{len(druglike)} drug-like molecules after QED filter")
+```
+
+<Tip>
+  Apply Lipinski's rule-of-five and QED filters immediately after generation to focus downstream analysis on drug-like candidates. RDKit's `Chem.RDConfig` and `Descriptors` modules provide all required property calculators.
+</Tip>

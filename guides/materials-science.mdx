@@ -1,0 +1,151 @@
+---
+title: "Materials Property Prediction with DeepChem"
+description: "Predict crystal properties, formation energies, and electronic structure using CGCNN, MEGNet, and LCNN models on materials datasets."
+---
+
+DeepChem extends beyond molecular drug discovery to inorganic and solid-state materials. Using pymatgen-based crystal structure featurizers and graph network models like `CGCNNModel` and `MEGNetModel`, you can predict formation energies, band gaps, and other materials properties directly from crystal structure inputs.
+
+## Material representations
+
+DeepChem supports three categories of material representation, each suited to different data availability and model requirements.
+
+<CardGroup cols={3}>
+  <Card title="Crystal structure" icon="gem">
+    Full 3D periodic structure via pymatgen `Structure` objects. Used by `CGCNNFeaturizer` and `SineCoulombMatrix`. Requires atomic positions and lattice parameters.
+  </Card>
+  <Card title="Composition-based" icon="flask">
+    Element stoichiometry only, via pymatgen `Composition` objects. Used by `ElementPropertyFingerprint`. No 3D coordinates required. Useful for high-throughput screening.
+  </Card>
+  <Card title="Surface / lattice" icon="table-cells">
+    Adsorbate + surface configurations for heterogeneous catalysis. Used by `LCNNFeaturizer`. Requires explicit surface slab representations.
+  </Card>
+</CardGroup>
+
+### Material featurizers
+
+<CardGroup cols={2}>
+  <Card title="CGCNNFeaturizer" icon="circle-nodes">
+    Builds a crystal graph from a pymatgen `Structure`. Nodes are atoms (92 elemental features); edges encode Gaussian-filtered neighbor distances (41 features). Returns a `GraphData` object.
+  </Card>
+  <Card title="ElementPropertyFingerprint" icon="fingerprint">
+    Computes statistics (min, max, range, mean, std, mode) over elemental properties for a `Composition`. Returns a 65-element NumPy vector. Requires pymatgen and matminer.
+  </Card>
+  <Card title="SineCoulombMatrix" icon="table">
+    Periodic variant of the Coulomb matrix. Replaces inverse distance with `1/sin²` of the lattice-periodic inter-site vector. Returns eigenvalue vector. Requires pymatgen and matminer.
+  </Card>
+  <Card title="LCNNFeaturizer" icon="layer-group">
+    Encodes adsorbate–surface configurations for lattice CNNs. Used with `LCNNModel` for surface science and heterogeneous catalysis predictions.
+  </Card>
+</CardGroup>
+
+## Key models
+
+### CGCNNModel — crystal graph convolutional network
+
+`CGCNNModel` applies convolutional operations over the crystal graph produced by `CGCNNFeaturizer`. It was originally designed to predict formation energies and band gaps from DFT-computed structures.
+
+```python
+import deepchem as dc
+from pymatgen.core import Lattice, Structure
+
+# Build example CsCl crystal
+lattice = Lattice.cubic(4.2)
+structure = Structure(
+    lattice, ["Cs", "Cl"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+)
+
+featurizer = dc.feat.CGCNNFeaturizer()
+features = featurizer.featurize([structure])
+# features[0] is a GraphData with 92 node features and 41 edge features
+```
+
+### MEGNetModel — materials graph network
+
+`MEGNetModel` uses a full graph network architecture with node, edge, and global (state) feature updates at each message-passing block. It accepts `GraphData` objects produced from pymatgen structures.
+
+```python
+from deepchem.models.torch_models.megnet import MEGNet
+
+model = MEGNet(
+    n_node_features=10,
+    n_edge_features=2,
+    n_global_features=4,
+    n_blocks=3,
+    mode='regression',
+    n_tasks=1,
+)
+```
+
+<Note>
+  `MEGNetModel` requires `torch-geometric` to be installed: `pip install torch-geometric`.
+</Note>
+
+### LCNNModel — lattice convolutional neural network
+
+`LCNNModel` is designed for ordered and disordered surface configurations in heterogeneous catalysis, predicting adsorption energies and other surface properties using `LCNNFeaturizer`-produced inputs.
+
+## Band gap prediction with CGCNNModel
+
+The following example demonstrates a complete band gap prediction pipeline using `CGCNNFeaturizer` and `CGCNNModel` on a list of pymatgen structures.
+
+```python
+import deepchem as dc
+import numpy as np
+from pymatgen.core import Lattice, Structure
+
+# --- Build a toy dataset of crystal structures ---
+lattice = Lattice.cubic(4.2)
+structures = [
+    Structure(lattice, ["Cs", "Cl"], [[0, 0, 0], [0.5, 0.5, 0.5]]),
+    Structure(Lattice.cubic(3.9), ["Na", "Cl"], [[0, 0, 0], [0.5, 0.5, 0.5]]),
+]
+# Band gap labels in eV (from DFT or experiment)
+band_gaps = np.array([[8.9], [8.5]])
+
+# --- Featurize ---
+featurizer = dc.feat.CGCNNFeaturizer()
+X = featurizer.featurize(structures)
+
+dataset = dc.data.NumpyDataset(X=X, y=band_gaps)
+
+# --- Train / test split ---
+splitter = dc.splits.RandomSplitter()
+train_dataset, test_dataset = splitter.train_test_split(dataset)
+
+# --- Build and train CGCNNModel ---
+model = dc.models.CGCNNModel(
+    n_tasks=1,
+    mode='regression',
+    learning_rate=1e-3,
+)
+model.fit(train_dataset, nb_epoch=100)
+
+# --- Evaluate ---
+metric = dc.metrics.Metric(dc.metrics.mean_absolute_error)
+print("Test MAE (eV):", model.evaluate(test_dataset, [metric]))
+```
+
+## Available datasets via MoleculeNet
+
+<CardGroup cols={2}>
+  <Card title="HOPV" icon="solar-panel">
+    Harvard Organic Photovoltaic Dataset. 350 molecules with experimental and DFT-computed solar cell parameters (PCE, HOMO, LUMO, gap). Useful for organic electronics research.
+  </Card>
+  <Card title="UV" icon="sun">
+    Optical UV absorption spectra dataset. Contains molecular structures with measured absorption wavelengths. Relevant for dye and photochemistry applications.
+  </Card>
+</CardGroup>
+
+<Warning>
+  `CGCNNFeaturizer`, `SineCoulombMatrix`, and `ElementPropertyFingerprint` all require pymatgen. Install it with:
+
+  ```bash
+  pip install pymatgen
+  ```
+
+  `SineCoulombMatrix` and `ElementPropertyFingerprint` additionally require matminer:
+
+  ```bash
+  pip install matminer
+  ```
+</Warning>

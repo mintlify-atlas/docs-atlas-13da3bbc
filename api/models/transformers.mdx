@@ -1,0 +1,303 @@
+---
+title: "Transformer Models for Molecules — dc.models"
+description: "Reference for DeepChem's ChemBERTa, MoLFormer, Grover, and MAT transformer models for molecular property prediction and generation from SMILES strings."
+---
+
+Transformer-based models have become central to molecular machine learning by leveraging large-scale pretraining on SMILES corpora or self-supervised graph objectives. DeepChem provides wrappers for several prominent molecular transformers, all exposing the standard `fit` / `predict` / `evaluate` API. Each model accepts raw SMILES strings as input and handles tokenization internally, making them straightforward to fine-tune on new property prediction tasks.
+
+<Warning>
+  All models on this page require the `transformers` library from Hugging Face. Install it with `pip install transformers`. Some models also download pretrained weights on first use and require an internet connection.
+</Warning>
+
+---
+
+## Chemberta
+
+`dc.models.Chemberta` is a RoBERTa-based language model pretrained on SMILES strings from the PubChem10M dataset. The model can be used for masked language modelling pretraining (`mlm`), multitask regression pretraining (`mtr`), or directly fine-tuned for downstream regression and classification tasks.
+
+### Parameters
+
+<ParamField path="task" type="string" required>
+  Learning task. Accepted values:
+  - `'mlm'` — masked language modeling for pretraining
+  - `'mtr'` — multitask regression for pretraining or fine-tuning
+  - `'regression'` — single or multitask property regression
+  - `'classification'` — single or multitask classification
+</ParamField>
+
+<ParamField path="tokenizer_path" type="string" default="seyonec/PubChem10M_SMILES_BPE_60k">
+  Path to a pretrained tokenizer. Accepts a HuggingFace Hub model ID or a local directory path containing a saved tokenizer.
+</ParamField>
+
+<ParamField path="n_tasks" type="number" default="1">
+  Number of prediction targets for multitask models.
+</ParamField>
+
+<ParamField path="config" type="object" default="{}">
+  Additional configuration parameters passed to the underlying RoBERTa model, such as `hidden_size`, `num_hidden_layers`, or `attention_probs_dropout_prob`.
+</ParamField>
+
+<ParamField path="model_dir" type="string">
+  Directory for saving checkpoints.
+</ParamField>
+
+### Example
+
+```python
+import os
+import tempfile
+import pandas as pd
+import deepchem as dc
+from deepchem.models.torch_models.chemberta import Chemberta
+
+tempdir = tempfile.mkdtemp()
+tokenizer_path = "seyonec/PubChem10M_SMILES_BPE_60k"
+
+smiles = [
+    "CCN(CCSC)C(=O)N[C@@](C)(CC)C(F)(F)F",
+    "CC1(C)CN(C(=O)Nc2cc3ccccc3nn2)C[C@@]2(CCOC2)O1",
+]
+labels = [3.112, 2.432]
+df = pd.DataFrame({"smiles": smiles, "task1": labels})
+
+with dc.utils.UniversalNamedTemporaryFile(mode='w') as tmpfile:
+    df.to_csv(tmpfile.name)
+    loader = dc.data.CSVLoader(
+        ["task1"],
+        feature_field="smiles",
+        featurizer=dc.feat.DummyFeaturizer(),
+    )
+    dataset = loader.create_dataset(tmpfile.name)
+
+# Pretrain with MLM
+pretrain_dir = os.path.join(tempdir, 'pretrain')
+pretrain_model = Chemberta(task='mlm', model_dir=pretrain_dir,
+                            tokenizer_path=tokenizer_path)
+pretrain_model.fit(dataset, nb_epoch=1)
+
+# Fine-tune for regression
+finetune_dir = os.path.join(tempdir, 'finetune')
+finetune_model = Chemberta(task='regression', model_dir=finetune_dir,
+                            tokenizer_path=tokenizer_path)
+finetune_model.load_from_pretrained(pretrain_dir)
+finetune_model.fit(dataset, nb_epoch=1)
+
+result = finetune_model.predict(dataset)
+```
+
+---
+
+## MoLFormer
+
+`dc.models.MoLFormer` is a large-scale SMILES-based chemical language model developed by IBM Research. It combines a linear-attention Transformer with rotary position embeddings and was trained on 10% of ZINC and 10% of PubChem (the `MoLFormer-XL-both-10pct` checkpoint). The API mirrors `Chemberta` exactly.
+
+### Parameters
+
+<ParamField path="task" type="string" required>
+  Learning task. Same options as `Chemberta`: `'mlm'`, `'mtr'`, `'regression'`, or `'classification'`.
+</ParamField>
+
+<ParamField path="tokenizer_path" type="string" default="ibm/MoLFormer-XL-both-10pct">
+  HuggingFace Hub model ID or local tokenizer path.
+</ParamField>
+
+<ParamField path="n_tasks" type="number" default="1">
+  Number of prediction targets.
+</ParamField>
+
+### Example
+
+```python
+import os, tempfile
+import deepchem as dc
+from deepchem.models.torch_models.molformer import MoLFormer
+
+tempdir = tempfile.mkdtemp()
+tokenizer_path = "ibm/MoLFormer-XL-both-10pct"
+
+# Reuse the same dataset constructed for ChemBERTa above
+pretrain_dir = os.path.join(tempdir, 'pretrain-molformer')
+model = MoLFormer(task='mlm', model_dir=pretrain_dir,
+                  tokenizer_path=tokenizer_path)
+model.fit(dataset, nb_epoch=1)
+
+finetune_dir = os.path.join(tempdir, 'finetune-molformer')
+ft_model = MoLFormer(task='regression', model_dir=finetune_dir,
+                     tokenizer_path=tokenizer_path)
+ft_model.load_from_pretrained(pretrain_dir)
+ft_model.fit(dataset, nb_epoch=1)
+```
+
+---
+
+## HuggingFaceModel
+
+`dc.models.HuggingFaceModel` is a generic wrapper that integrates any HuggingFace `PreTrainedModel` with the DeepChem training and evaluation API. It handles SMILES tokenization on the fly, delegating to the supplied tokenizer, and supports all four task types.
+
+### Parameters
+
+<ParamField path="model" type="object" required>
+  A HuggingFace `PreTrainedModel` instance (for example, `RobertaForSequenceClassification`).
+</ParamField>
+
+<ParamField path="task" type="string">
+  Learning task. Accepted values: `'mlm'`, `'mtr'`, `'regression'`, `'classification'`. When `None`, the raw model output (last hidden states) is returned.
+</ParamField>
+
+<ParamField path="tokenizer" type="object" required>
+  A HuggingFace `PreTrainedTokenizer` used to convert SMILES into token IDs.
+</ParamField>
+
+<ParamField path="config" type="object">
+  Optional dict of model configuration overrides passed to the HuggingFace `AutoModel` class when loading from a checkpoint.
+</ParamField>
+
+<ParamField path="model_dir" type="string">
+  Directory for saving checkpoints.
+</ParamField>
+
+### Example
+
+```python
+from transformers import RobertaConfig, RobertaForSequenceClassification
+from transformers import RobertaTokenizerFast
+import deepchem as dc
+from deepchem.models import HuggingFaceModel
+
+config = RobertaConfig(vocab_size=1000, num_labels=1)
+hf_model = RobertaForSequenceClassification(config)
+
+tokenizer = RobertaTokenizerFast.from_pretrained('./my_tokenizer')
+
+model = HuggingFaceModel(
+    model=hf_model,
+    task='regression',
+    tokenizer=tokenizer,
+    model_dir='./hf_model_dir',
+)
+model.fit(dataset, nb_epoch=10)
+```
+
+---
+
+## Grover
+
+`dc.models.torch_models.GroverModel` (accessed via `GroverPretrain` and `GroverFinetune`) implements the self-supervised graph transformer from Rong et al. (2020). Grover is pretrained on a combination of atom vocabulary prediction, bond vocabulary prediction, and functional group prediction tasks on large molecular datasets. The resulting embeddings can be fine-tuned for downstream property prediction.
+
+**Required featurizer:** `dc.feat.GroverFeaturizer`
+
+### Pretraining components
+
+<Expandable title="GroverPretrain components">
+  <ResponseField name="embedding" type="nn.Module">
+    A `GroverEmbedding` layer that produces atom and bond hidden states from graph inputs.
+  </ResponseField>
+  <ResponseField name="atom_vocab_task_atom" type="nn.Module">
+    `GroverAtomVocabPredictor` predicting atom vocabulary from atom hidden states.
+  </ResponseField>
+  <ResponseField name="atom_vocab_task_bond" type="nn.Module">
+    `GroverAtomVocabPredictor` predicting atom vocabulary from bond hidden states.
+  </ResponseField>
+  <ResponseField name="bond_vocab_task_atom" type="nn.Module">
+    `GroverBondVocabPredictor` predicting bond vocabulary from atom hidden states.
+  </ResponseField>
+  <ResponseField name="bond_vocab_task_bond" type="nn.Module">
+    `GroverBondVocabPredictor` predicting bond vocabulary from bond hidden states.
+  </ResponseField>
+  <ResponseField name="functional_group_predictor" type="nn.Module">
+    `GroverFunctionalGroupPredictor` predicting functional group membership.
+  </ResponseField>
+</Expandable>
+
+### Example
+
+```python
+import deepchem as dc
+from deepchem.models.torch_models.grover import GroverPretrain
+from deepchem.models.torch_models.grover_layers import (
+    GroverEmbedding, GroverAtomVocabPredictor,
+    GroverBondVocabPredictor, GroverFunctionalGroupPredictor,
+)
+from deepchem.utils.grover import BatchGroverGraph
+
+smiles = ['CC', 'CCC', 'CC(=O)C']
+fg = dc.feat.CircularFingerprint()
+featurizer = dc.feat.GroverFeaturizer(features_generator=fg)
+graphs = featurizer.featurize(smiles)
+batched_graph = BatchGroverGraph(graphs)
+f_atoms, f_bonds, a2b, b2a, b2revb, a2a, a_scope, b_scope, _ = (
+    batched_graph.get_components()
+)
+
+components = {
+    'embedding': GroverEmbedding(
+        node_fdim=f_atoms.shape[1], edge_fdim=f_bonds.shape[1]
+    ),
+    'atom_vocab_task_atom': GroverAtomVocabPredictor(vocab_size=10, in_features=128),
+    'atom_vocab_task_bond': GroverAtomVocabPredictor(vocab_size=10, in_features=128),
+    'bond_vocab_task_atom': GroverBondVocabPredictor(vocab_size=10, in_features=128),
+    'bond_vocab_task_bond': GroverBondVocabPredictor(vocab_size=10, in_features=128),
+    'functional_group_predictor': GroverFunctionalGroupPredictor(10),
+}
+model = GroverPretrain(**components)
+```
+
+---
+
+## MAT (Molecular Attention Transformer)
+
+`dc.models.torch_models.MATModel` wraps the internal `MAT` module, which augments standard self-attention with a graph-distance attention term computed from the molecular adjacency and distance matrices. This allows the model to blend learned attention with explicit chemical structure.
+
+**Required featurizer:** `dc.feat.MATFeaturizer`
+
+### Key parameters of the internal `MAT` module
+
+<ParamField path="dist_kernel" type="string" default="softmax">
+  Kernel for the distance attention. Either `'softmax'` or `'exp'`.
+</ParamField>
+
+<ParamField path="n_encoders" type="number" default="8">
+  Number of Transformer encoder layers.
+</ParamField>
+
+<ParamField path="lambda_attention" type="number" default="0.33">
+  Weight for the learned self-attention component in the blended attention.
+</ParamField>
+
+<ParamField path="lambda_distance" type="number" default="0.33">
+  Weight for the distance-based attention component.
+</ParamField>
+
+<ParamField path="h" type="number" default="16">
+  Number of attention heads.
+</ParamField>
+
+<ParamField path="gen_d_output" type="number" default="1">
+  Output dimensionality of the generator (prediction head).
+</ParamField>
+
+### Example
+
+```python
+import pandas as pd
+import deepchem as dc
+
+smiles = ['CC', 'CCC', 'CCCC', 'CCCCC', 'CCCCCCC']
+vals = [1.35, 6.72, 5.67, 1.23, 1.76]
+df = pd.DataFrame({'smiles': smiles, 'y': vals})
+df.to_csv('mat_example.csv', index=False)
+
+loader = dc.data.CSVLoader(
+    tasks=['y'],
+    feature_field='smiles',
+    featurizer=dc.feat.MATFeaturizer(),
+)
+dataset = loader.create_dataset('mat_example.csv')
+
+model = dc.models.torch_models.MATModel()
+loss = model.fit(dataset, nb_epoch=10)
+```
+
+<Info>
+  The `lambda_attention`, `lambda_distance`, and implicit `lambda_adjacency` (computed as `1 - lambda_attention - lambda_distance`) must sum to 1. The default values split attention equally across all three signals.
+</Info>

@@ -1,0 +1,129 @@
+---
+title: "Install DeepChem"
+description: "Install DeepChem via pip or conda with PyTorch, TensorFlow, or JAX backends. Covers stable releases, nightly builds, Docker images, and GPU setup."
+---
+
+DeepChem can be installed from PyPI or conda-forge in a few seconds. The base package ships with a small set of required dependencies; deep learning backends (PyTorch, TensorFlow, JAX) are optional extras so you only pull in what your project needs.
+
+## Requirements
+
+DeepChem requires **Python 3.7 through 3.12**. The following packages are always installed as hard dependencies:
+
+| Package | Notes |
+|---|---|
+| `joblib` | Parallel processing utilities |
+| `numpy<2` | Array computing; NumPy 2.x is not yet supported |
+| `pandas` | DataFrame I/O |
+| `scikit-learn` | ML utilities and classical models |
+| `sympy` | Symbolic mathematics |
+| `scipy>=1.10.1` | Scientific computing |
+| `rdkit` | Cheminformatics toolkit |
+
+<Note>
+If you encounter `ImportError: This class requires XXXX` after installation, you may need a soft dependency. See the [soft requirements reference](https://deepchem.readthedocs.io/en/latest/requirements.html#soft-requirements) on ReadTheDocs.
+</Note>
+
+## Stable install
+
+<CodeGroup>
+
+```bash pip
+pip install deepchem
+```
+
+```bash conda
+conda install -c conda-forge deepchem
+```
+
+</CodeGroup>
+
+### Nightly build
+
+The nightly build tracks the `master` branch and includes the latest unreleased changes:
+
+```bash
+pip install --pre deepchem
+```
+
+## Backend extras
+
+Install a backend-specific extra to unlock models that depend on it. Only one backend is required; you can install multiple if needed.
+
+<Tabs>
+  <Tab title="PyTorch">
+    Installs `torch==2.2.1`, `torchvision`, `pytorch-lightning`, `dgl<2.2.1`, and `dgllife`. Enables GCNModel, GATModel, AttentiveFPModel, DMPNNModel, MEGNetModel, and other PyTorch-based architectures.
+
+    ```bash
+    pip install deepchem[torch]
+    ```
+  </Tab>
+  <Tab title="TensorFlow">
+    Installs `tensorflow`, `tensorflow_probability`, and (on Python < 3.12) `tensorflow_addons`. Enables KerasModel, GraphConvModel, MPNNModel, GAN, SeqToSeq, and other TF-based models.
+
+    ```bash
+    pip install deepchem[tensorflow]
+    ```
+  </Tab>
+  <Tab title="JAX">
+    Installs `jax==0.4.30`, `jaxlib==0.4.30`, `dm-haiku==0.0.13`, and `optax`. Enables JaxModel and PINNModel.
+
+    ```bash
+    pip install deepchem[jax]
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+In `zsh`, square brackets are used for glob pattern matching. Wrap the argument in quotes to prevent shell expansion:
+
+```bash
+pip install 'deepchem[torch]'
+```
+</Warning>
+
+## Docker
+
+Docker images are published to [DockerHub](https://hub.docker.com/repository/docker/deepchemio/deepchem) in two flavours:
+
+| Tag | Description |
+|---|---|
+| `deepchemio/deepchem:x.x.x` | Versioned release built with conda. Published when a version tag is pushed. Dockerfile in `docker/tag/`. |
+| `deepchemio/deepchem:latest` | Built from `master` on every commit. Always tracks the newest code. Dockerfile in `docker/nightly/`. |
+
+Pull and run a specific release:
+
+```bash
+docker pull deepchemio/deepchem:2.4.0
+docker run -it deepchemio/deepchem:2.4.0
+```
+
+For detailed Docker usage, see the [installation guide on ReadTheDocs](https://deepchem.readthedocs.io/en/latest/installation.html#docker).
+
+## From source
+
+Installing from source lets you run the full test suite, contribute patches, or install all soft dependencies at once.
+
+```bash
+git clone https://github.com/deepchem/deepchem.git
+cd deepchem
+pip install -e ".[torch]"
+```
+
+For the conda-based from-source workflow, follow the [full from-source guide](https://deepchem.readthedocs.io/en/latest/installation.html#from-source-with-conda) on ReadTheDocs.
+
+## GPU configuration
+
+DeepChem itself does not need special installation for GPU support—configure the underlying framework before installing DeepChem:
+
+- **TensorFlow** — install CUDA and cuDNN, then install TensorFlow normally. TensorFlow detects GPUs automatically.
+- **PyTorch** — follow the [PyTorch local install guide](https://pytorch.org/get-started/locally/) to select the right CUDA version for your system before running `pip install deepchem[torch]`.
+- **JAX** — follow the [JAX GPU installation instructions](https://github.com/google/jax#pip-installation-gpu-cuda) to install the CUDA-enabled `jaxlib` wheel.
+
+<Tip>
+After installation, verify GPU availability with your framework before running DeepChem models:
+
+```python
+import torch
+print(torch.cuda.is_available())  # should print True
+```
+</Tip>

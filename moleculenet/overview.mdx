@@ -1,0 +1,127 @@
+---
+title: "MoleculeNet: Benchmark Datasets for Molecular ML"
+description: "MoleculeNet provides 40+ curated datasets for benchmarking molecular machine learning, covering toxicity, quantum chemistry, and biophysics."
+---
+
+MoleculeNet is a large-scale benchmark for molecular machine learning, curated as part of the DeepChem project. It standardizes data loading, featurization, splitting, and transformation across more than 40 public datasets, enabling reproducible comparisons across models and methods. Whether you are working on drug discovery, materials science, or quantum chemistry, MoleculeNet provides a common interface so you can focus on modeling rather than data wrangling.
+
+## Dataset categories
+
+MoleculeNet organizes its datasets into six broad domains. Each domain targets a different set of molecular properties and use cases.
+
+<CardGroup cols={2}>
+  <Card title="Biophysics" icon="dna">
+    Experimental binding and activity measurements from large-scale screening campaigns. Includes BACE, PCBA, MUV, HIV, and PPBR.
+  </Card>
+  <Card title="Physical chemistry" icon="flask">
+    Measured physicochemical properties such as solubility, solvation free energy, and lipophilicity. Includes ESOL (Delaney), FreeSolv, Lipophilicity, and SAMPL.
+  </Card>
+  <Card title="Quantum mechanics" icon="atom">
+    Computed electronic and thermodynamic properties from density functional theory calculations. Includes QM7, QM8, and QM9.
+  </Card>
+  <Card title="Toxicology" icon="triangle-alert">
+    Toxicity and clinical outcome labels for drug-like compounds. Includes Tox21, ToxCast, ClinTox, and SIDER.
+  </Card>
+  <Card title="Materials" icon="layers">
+    Datasets targeting solid-state and polymer properties. Includes HOPV, UV, and thermosol.
+  </Card>
+  <Card title="Bioinformatics" icon="microscope">
+    Protein–ligand binding and kinase profiling data. Includes PDBbind and kinase datasets.
+  </Card>
+</CardGroup>
+
+## Standardized API
+
+Every MoleculeNet loader follows the same calling convention. Each `load_xxx()` function accepts a featurizer, splitter, and list of transformers, and returns a three-element tuple:
+
+```python
+tasks, datasets, transformers = dc.molnet.load_tox21()
+```
+
+| Return value | Type | Description |
+|---|---|---|
+| `tasks` | `List[str]` | Names of the prediction targets in the dataset |
+| `datasets` | `Tuple[Dataset, ...]` | `(train, valid, test)` split datasets, or a single dataset if `splitter=None` |
+| `transformers` | `List[dc.trans.Transformer]` | Transformers that were fit on the training set and applied to all splits |
+
+### Featurizer shortcuts
+
+Instead of passing a `Featurizer` object, you can pass a string alias:
+
+| Alias | Featurizer |
+|---|---|
+| `'ecfp'` | `CircularFingerprint(size=1024)` |
+| `'graphconv'` | `ConvMolFeaturizer()` |
+| `'weave'` | `WeaveFeaturizer()` |
+| `'raw'` | `RawFeaturizer()` |
+| `'smiles2img'` | `SmilesToImage(img_size=80, img_spec='std')` |
+
+### Splitter shortcuts
+
+| Alias | Splitter |
+|---|---|
+| `'scaffold'` | `ScaffoldSplitter()` |
+| `'random'` | `RandomSplitter()` |
+| `'index'` | `IndexSplitter()` |
+| `'butina'` | `ButinaSplitter()` |
+| `'stratified'` | `RandomStratifiedSplitter()` |
+
+### Transformer shortcuts
+
+| Alias | Transformer |
+|---|---|
+| `'balancing'` | `BalancingTransformer` (classification) |
+| `'normalization'` | `NormalizationTransformer(transform_y=True)` |
+| `'minmax'` | `MinMaxTransformer(transform_y=True)` |
+| `'log'` | `LogTransformer(transform_y=True)` |
+
+## Loading multiple datasets
+
+The example below loads three datasets with different featurizers and inspects the returned values.
+
+```python
+import deepchem as dc
+
+# Classification dataset with scaffold split
+tasks, (train, valid, test), transformers = dc.molnet.load_tox21(
+    featurizer='ecfp',
+    splitter='scaffold',
+    transformers=['balancing'],
+)
+print("Tox21 tasks:", tasks)
+print("Train size:", len(train))
+
+# Regression dataset with random split
+tasks, (train, valid, test), transformers = dc.molnet.load_delaney(
+    featurizer='graphconv',
+    splitter='random',
+    transformers=['normalization'],
+)
+print("Delaney tasks:", tasks)
+
+# Quantum chemistry dataset, no split
+tasks, (dataset,), transformers = dc.molnet.load_qm9(
+    splitter=None,
+    transformers=['normalization'],
+)
+print("QM9 tasks:", tasks)
+print("Total molecules:", len(dataset))
+```
+
+## Caching and automatic download
+
+<Note>
+Raw dataset files are downloaded automatically on the first call and cached to `~/.deepchem/` by default. Subsequent calls with the same featurizer and splitter reload the pre-featurized dataset from disk, so only the first call incurs a download and featurization cost.
+</Note>
+
+You can override the cache location with the `data_dir` and `save_dir` parameters:
+
+```python
+tasks, datasets, transformers = dc.molnet.load_tox21(
+    data_dir="/data/raw",
+    save_dir="/data/featurized",
+    reload=True,
+)
+```
+
+Set `reload=False` to force re-featurization even when cached data exists.

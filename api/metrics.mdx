@@ -1,0 +1,239 @@
+---
+title: "Metrics Reference — dc.metrics"
+description: "Reference for DeepChem's Metric class and score functions including ROC-AUC, R², Pearson correlation, BEDROC, and concordance index."
+---
+
+The `dc.metrics` module provides a unified API for evaluating DeepChem models. It exposes the `Metric` wrapper class, which standardizes how score functions are used with `model.evaluate()`, as well as a collection of classification and regression scoring functions sourced from scikit-learn, SciPy, and DeepChem-native implementations.
+
+## Metric class
+
+`Metric` wraps a raw score function so that it understands DeepChem's multitask label and prediction shapes. When you call `model.evaluate(dataset, metrics)`, each `Metric` object handles shape normalization, optional thresholding, and task averaging automatically.
+
+```python
+dc.metrics.Metric(
+    metric,
+    task_averager=None,
+    name=None,
+    threshold=None,
+    mode=None,
+    n_tasks=None,
+    classification_handling_mode=None,
+    threshold_value=None,
+)
+```
+
+### Parameters
+
+<ParamField path="metric" type="Callable[..., float]" required>
+  A score function that accepts `y_true` and `y_pred` (in that order) and returns a float. If the function accepts sample weights, it may also take a `sample_weight` keyword argument.
+</ParamField>
+
+<ParamField path="task_averager" type="Callable" default="numpy.mean">
+  A function used to average per-task scores into a single scalar. Defaults to `np.mean`. Pass `None` to keep the default mean aggregation.
+</ParamField>
+
+<ParamField path="name" type="string">
+  Human-readable name for this metric. If omitted, the name is inferred from the wrapped function's `__name__` attribute.
+</ParamField>
+
+<ParamField path="threshold" type="float" deprecated>
+  Threshold for binary classification predictions. Deprecated — set the threshold via `compute_metric` instead.
+</ParamField>
+
+<ParamField path="mode" type="string">
+  Either `"classification"` or `"regression"`. When `None`, the mode is inferred automatically from the metric function name.
+</ParamField>
+
+<ParamField path="n_tasks" type="number">
+  Number of tasks in the dataset. Required for multitask datasets where label shapes must be validated.
+</ParamField>
+
+<ParamField path="classification_handling_mode" type="string">
+  Controls how class probabilities output by classification models are transformed before being passed to the metric function. Accepted values:
+
+  - `None` — select automatically based on the metric.
+  - `"direct"` — pass `y_pred` directly (as class probabilities) into the metric.
+  - `"threshold"` — apply `threshold_predictions` to produce class-index arrays of shape `(N, n_tasks)`.
+  - `"threshold-one-hot"` — apply thresholding then convert to one-hot encoding.
+</ParamField>
+
+<ParamField path="threshold_value" type="float">
+  Probability threshold for the positive class when `classification_handling_mode` is `"threshold"` or `"threshold-one-hot"`. Only meaningful for binary classification. If `None`, `argmax` selects the highest-probability class.
+</ParamField>
+
+---
+
+## Classification metrics
+
+These functions are imported from scikit-learn or implemented natively in DeepChem and can be passed directly to `Metric()`.
+
+<Warning>
+  `bedroc_score` requires RDKit to be installed (`pip install rdkit`). All other metrics listed here depend only on scikit-learn and NumPy.
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="roc_auc_score — ROC area under the curve">
+    The primary metric for binary classification tasks in drug discovery. Measures the probability that the model ranks a positive example higher than a negative one. Imported from `sklearn.metrics`.
+
+    ```python
+    import deepchem as dc
+
+    metric = dc.metrics.Metric(dc.metrics.roc_auc_score)
+    ```
+  </Accordion>
+
+  <Accordion title="accuracy_score — fraction of correct predictions">
+    Proportion of predictions that exactly match the true label. Imported from `sklearn.metrics`.
+
+    ```python
+    metric = dc.metrics.Metric(dc.metrics.accuracy_score)
+    ```
+  </Accordion>
+
+  <Accordion title="balanced_accuracy_score — accuracy adjusted for class imbalance">
+    Computes accuracy on each class separately, then averages. More informative than `accuracy_score` when class sizes differ. Imported from `sklearn.metrics`.
+  </Accordion>
+
+  <Accordion title="precision_score / recall_score / f1_score">
+    Standard precision, recall, and F1 metrics from `sklearn.metrics`. Commonly used together to characterize binary classifier behavior.
+  </Accordion>
+
+  <Accordion title="matthews_corrcoef — Matthews correlation coefficient">
+    A balanced measure for binary classification that accounts for all four confusion matrix cells. Imported from `sklearn.metrics`. Returns a value in `[-1, 1]` where 1 is perfect prediction.
+  </Accordion>
+
+  <Accordion title="prc_auc_score — precision-recall AUC">
+    Area under the precision-recall curve. Preferred over ROC-AUC on highly imbalanced datasets where the negative class dominates. Native DeepChem implementation.
+
+    ```python
+    def prc_auc_score(y: np.ndarray, y_pred: np.ndarray) -> float: ...
+    ```
+  </Accordion>
+
+  <Accordion title="bedroc_score — Boltzmann-enhanced discrimination of ROC">
+    Developed by Truchon and Bayley, BEDROC rewards early recognition of actives in a ranked list. It is the standard metric for virtual screening benchmarks. Requires RDKit.
+
+    ```python
+    def bedroc_score(y_true: np.ndarray, y_pred: np.ndarray, alpha: float = 20.0) -> float: ...
+    ```
+
+    The `alpha` parameter controls how much weight is given to the top of the ranked list. Higher values place more emphasis on early recognition.
+  </Accordion>
+
+  <Accordion title="kappa_score / cohen_kappa_score — inter-rater agreement">
+    Measures agreement between predictions and true labels corrected for chance. `kappa_score` is an alias for `cohen_kappa_score` from `sklearn.metrics`.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Regression metrics
+
+<AccordionGroup>
+  <Accordion title="r2_score — coefficient of determination">
+    The fraction of variance in the target explained by the model. A score of 1.0 is perfect; 0.0 means the model performs no better than predicting the mean. Imported from `sklearn.metrics`.
+
+    ```python
+    metric = dc.metrics.Metric(dc.metrics.r2_score)
+    ```
+  </Accordion>
+
+  <Accordion title="pearsonr / pearson_r2_score — Pearson correlation">
+    `pearsonr` returns the Pearson correlation coefficient (range `[-1, 1]`). `pearson_r2_score` returns the square of this value (`r²`), measuring how well the linear trend is captured. Both wrap `scipy.stats.pearsonr`.
+
+    ```python
+    def pearsonr(y: np.ndarray, y_pred: np.ndarray) -> float: ...
+    def pearson_r2_score(y: np.ndarray, y_pred: np.ndarray) -> float: ...
+    ```
+  </Accordion>
+
+  <Accordion title="mean_squared_error / mean_absolute_error">
+    Standard loss-based error metrics from `sklearn.metrics`. Both penalize residuals; MSE squares them (penalizing large errors more), while MAE treats all residuals equally.
+  </Accordion>
+
+  <Accordion title="rms_score / mae_score — convenience aliases">
+    Native DeepChem wrappers around `mean_squared_error` and `mean_absolute_error`. `rms_score` returns the root-mean-square error (√MSE).
+
+    ```python
+    def rms_score(y_true: np.ndarray, y_pred: np.ndarray) -> float: ...
+    def mae_score(y_true: np.ndarray, y_pred: np.ndarray) -> float: ...
+    ```
+  </Accordion>
+
+  <Accordion title="concordance_index — ranking quality for survival analysis">
+    Measures the quality of the predicted ranking by counting concordant pairs (where the model correctly orders two samples). Returns a value in `[0, 1]`; 0.5 is chance performance.
+
+    ```python
+    def concordance_index(y_true: np.ndarray, y_pred: np.ndarray) -> float: ...
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Code examples
+
+### Single metric evaluation
+
+```python
+import deepchem as dc
+
+# Load a dataset (e.g., from MoleculeNet)
+tasks, datasets, transformers = dc.molnet.load_bace_classification()
+train, valid, test = datasets
+
+# Build and train a model
+model = dc.models.AttentiveFPModel(n_tasks=1, mode='classification', batch_size=32)
+model.fit(train, nb_epoch=30)
+
+# Evaluate with ROC-AUC
+metric = dc.metrics.Metric(dc.metrics.roc_auc_score)
+results = model.evaluate(test, [metric], transformers)
+print(results)
+# {'roc_auc_score': 0.82}
+```
+
+### Multiple metrics at once
+
+```python
+import deepchem as dc
+
+tasks, datasets, transformers = dc.molnet.load_delaney()
+train, valid, test = datasets
+
+model = dc.models.AttentiveFPModel(n_tasks=1, mode='regression', batch_size=32)
+model.fit(train, nb_epoch=50)
+
+metrics = [
+    dc.metrics.Metric(dc.metrics.pearson_r2_score),
+    dc.metrics.Metric(dc.metrics.rms_score),
+    dc.metrics.Metric(dc.metrics.mean_absolute_error),
+]
+results = model.evaluate(test, metrics, transformers)
+print(results)
+# {'pearson_r2_score': 0.79, 'rms_score': 0.61, 'mean_absolute_error': 0.47}
+```
+
+### Custom metric function
+
+```python
+import numpy as np
+import deepchem as dc
+
+def top_10_percent_recall(y_true, y_pred):
+    """Fraction of true positives recovered in the top 10% of predictions."""
+    n = len(y_true)
+    cutoff = max(1, n // 10)
+    top_indices = np.argsort(y_pred[:, 1])[::-1][:cutoff]
+    return np.sum(y_true[top_indices]) / max(1, np.sum(y_true))
+
+metric = dc.metrics.Metric(
+    top_10_percent_recall,
+    name="top_10_recall",
+    mode="classification",
+)
+```
+
+<Tip>
+  When your metric function does not follow the standard `sklearn` naming convention, set `mode` explicitly on the `Metric` constructor to avoid automatic mode inference falling back to an incorrect value.
+</Tip>

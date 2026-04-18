@@ -1,0 +1,355 @@
+---
+title: "Complex & Sequence Featurizers — dc.feat"
+description: "Reference for DeepChem's protein-ligand complex featurizers and biological sequence featurizers for docking and bioinformatics tasks."
+---
+
+Complex featurizers in `dc.feat` operate on protein–ligand pairs rather than individual molecules. They accept tuples of file paths (e.g., `(ligand.sdf, protein.pdb)`) and produce voxelized grids, fingerprints, or coordinate arrays that capture the 3D interaction geometry at the binding interface. Sequence featurizers handle biological sequences (SMILES, FASTA, SAM/BAM) and wrap standard tokenizers for use with deep learning models.
+
+<Warning>
+Most complex featurizers require additional dependencies:
+
+```bash
+pip install rdkit mdtraj openbabel
+```
+
+Some featurizers download atom-type data or charge parameters on first use and require an internet connection.
+</Warning>
+
+---
+
+## Protein–Ligand Complex Featurizers
+
+### RdkitGridFeaturizer
+
+Versatile featurizer that computes either flat feature vectors or 3D voxel grids for a protein–ligand complex. Supported feature types include ECFP fingerprints, SPLIF interaction fingerprints, SYBYL atom types, hydrogen bonds, salt bridges, cation–pi, and pi–stack interactions. Multiple feature types are concatenated in the order specified.
+
+```python
+dc.feat.RdkitGridFeaturizer(
+    nb_rotations: int = 0,
+    feature_types: Optional[List[str]] = None,
+    ecfp_degree: int = 2,
+    ecfp_power: int = 3,
+    splif_power: int = 3,
+    box_width: float = 16.0,
+    voxel_width: float = 1.0,
+    flatten: bool = False,
+    verbose: bool = True,
+    sanitize: bool = False,
+    **kwargs,
+)
+```
+
+<ParamField path="nb_rotations" type="int" default="0">
+  Number of random rotations to apply to the complex for data augmentation.
+</ParamField>
+
+<ParamField path="feature_types" type="List[str]">
+  Feature types to compute. Flat types: `"ecfp_ligand"`, `"ecfp_hashed"`, `"splif_hashed"`, `"hbond_count"`. Voxel types: `"ecfp"`, `"splif"`, `"salt_bridge"`, `"charge"`, `"hbond"`, `"pi_stack"`, `"cation_pi"`. Predefined sets: `"flat_combined"`, `"voxel_combined"`, `"all_combined"`. Defaults to `["ecfp"]`.
+</ParamField>
+
+<ParamField path="ecfp_degree" type="int" default="2">
+  ECFP radius.
+</ParamField>
+
+<ParamField path="box_width" type="float" default="16.0">
+  Side length in Angstroms of the voxel box, centered on the ligand centroid.
+</ParamField>
+
+<ParamField path="voxel_width" type="float" default="1.0">
+  Size of each voxel in Angstroms. The number of voxels per edge is `int(box_width / voxel_width)`.
+</ParamField>
+
+<ParamField path="flatten" type="bool" default="false">
+  Flatten the output voxel array into a 1D vector.
+</ParamField>
+
+<ParamField path="sanitize" type="bool" default="false">
+  Sanitize molecules before featurization. Required for aromatic interaction features (`pi_stack`, `cation_pi`).
+</ParamField>
+
+```python example.py
+import deepchem as dc
+
+featurizer = dc.feat.RdkitGridFeaturizer(
+    feature_types=["hbond_count", "ecfp_hashed"],
+    flatten=True,
+)
+# complex_data is a list of (ligand_path, protein_path) tuples
+features = featurizer.featurize(complex_data)
+```
+
+---
+
+### AtomicConvFeaturizer
+
+Computes raw 3D atomic coordinates and neighbor lists for protein–ligand complexes for use with `AtomicConvModel`. Each atom is represented by its 3D position and atom type, and neighbors within a cutoff radius are enumerated.
+
+```python
+dc.feat.AtomicConvFeaturizer(
+    tasks: List[str],
+    ligand_atomtypes: List[str],
+    complex_atomtypes: List[str],
+    neighbor_cutoff: float = 12.0,
+    max_num_neighbors: int = 12,
+    batch_size: int = 24,
+    ...
+)
+```
+
+**Returns:** Tuple of coordinate arrays and neighbor lists suitable for `AtomicConvModel`.
+
+---
+
+### ContactCircularFingerprint
+
+Computes Morgan (ECFP) fingerprints restricted to atoms at the protein–ligand contact interface. Atoms within `cutoff` Angstroms of the partner molecule are identified as contact atoms; circular fingerprints are then computed for those atoms only.
+
+```python
+dc.feat.ContactCircularFingerprint(
+    cutoff: float = 4.5,
+    radius: int = 2,
+    size: int = 8,
+)
+```
+
+<ParamField path="cutoff" type="float" default="4.5">
+  Distance threshold in Angstroms for identifying contact atoms.
+</ParamField>
+
+<ParamField path="radius" type="int" default="2">
+  ECFP radius for fingerprint computation.
+</ParamField>
+
+<ParamField path="size" type="int" default="8">
+  Bit vector length. Output shape is `(2 * size,)` — one vector per molecule in the complex.
+</ParamField>
+
+---
+
+### SplifFingerprint
+
+Structural Protein–Ligand Interaction Fingerprint (SPLIF). For each ligand atom, identifies close atom pairs from the protein and ligand at three distance bins `(0–2 Å, 2–3 Å, 3–4.5 Å)`. Each interacting atom pair is expanded to circular substructures and a combined fingerprint bit is set.
+
+```python
+dc.feat.SplifFingerprint(
+    contact_bins: Optional[List[Tuple[float, float]]] = None,
+    radius: int = 2,
+    size: int = 8,
+    sanitize: bool = False,
+)
+```
+
+<ParamField path="contact_bins" type="List[Tuple[float, float]]">
+  Distance bins defining interaction ranges. Defaults to `[(0, 2.0), (2.0, 3.0), (3.0, 4.5)]`.
+</ParamField>
+
+<ParamField path="radius" type="int" default="2">
+  ECFP radius for atom-pair fragment generation.
+</ParamField>
+
+<ParamField path="size" type="int" default="8">
+  Bit vector length per distance bin.
+</ParamField>
+
+### SplifVoxelizer
+
+Voxelized version of SPLIF. Projects SPLIF interaction fingerprints into a 3D grid centered on the ligand. Output shape is `(voxels_per_edge, voxels_per_edge, voxels_per_edge, n_bins)`.
+
+---
+
+### HydrogenBondCounter
+
+Counts the number of hydrogen bonds between protein and ligand at three geometry-based distance/angle bins.
+
+```python
+dc.feat.HydrogenBondCounter(
+    cutoff: float = 4.5,
+)
+```
+
+**Returns:** `np.ndarray` of shape `(3,)` — one count per distance bin.
+
+---
+
+## Voxelizers (for 3D CNN models)
+
+All voxelizers inherit from `ComplexFeaturizer` and accept a `(ligand_path, protein_path)` tuple. They produce a 4D tensor of shape `(voxels_per_edge, voxels_per_edge, voxels_per_edge, n_channels)`.
+
+<AccordionGroup>
+  <Accordion title="ChargeVoxelizer">
+    Localizes Gasteiger partial charges of each atom in its voxel. Sums charge contributions within each voxel.
+
+    ```python
+    dc.feat.ChargeVoxelizer(
+        cutoff: float = 4.5,
+        box_width: float = 16.0,
+        voxel_width: float = 1.0,
+        reduce_to_contacts: bool = True,
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="SaltBridgeVoxelizer">
+    Localizes salt bridge interactions between oppositely charged atoms in the complex. Counts salt bridges within each voxel.
+
+    ```python
+    dc.feat.SaltBridgeVoxelizer(
+        cutoff: float = 5.0,
+        box_width: float = 16.0,
+        voxel_width: float = 1.0,
+        reduce_to_contacts: bool = True,
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="CationPiVoxelizer">
+    Localizes cation–pi interactions between cationic atoms and aromatic rings. Uses a distance cutoff and an angle cutoff relative to the ring normal.
+
+    ```python
+    dc.feat.CationPiVoxelizer(
+        cutoff: float = 6.5,
+        angle_cutoff: float = 30.0,
+        box_width: float = 16.0,
+        voxel_width: float = 1.0,
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="PiStackVoxelizer">
+    Localizes pi–pi stacking interactions between aromatic rings. Uses distance and angle criteria between ring planes.
+
+    ```python
+    dc.feat.PiStackVoxelizer(
+        cutoff: float = 4.4,
+        angle_cutoff: float = 30.0,
+        box_width: float = 16.0,
+        voxel_width: float = 1.0,
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="HydrogenBondVoxelizer">
+    Localizes hydrogen bond interactions within a 3D voxel grid. Uses the same distance/angle bins as `HydrogenBondCounter`.
+
+    ```python
+    dc.feat.HydrogenBondVoxelizer(
+        cutoff: float = 4.5,
+        box_width: float = 16.0,
+        voxel_width: float = 1.0,
+        reduce_to_contacts: bool = True,
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="ContactCircularVoxelizer">
+    Voxelized variant of `ContactCircularFingerprint`. Projects contact ECFP bits into a 3D grid.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## BindingPocketFeaturizer
+
+Detects and featurizes putative binding pockets on a protein surface. Pockets are identified as cavities in the protein structure and characterized by the residue types lining them.
+
+```python
+dc.feat.BindingPocketFeaturizer()
+```
+
+**Input:** Protein structure file path. Returns an array of per-pocket feature vectors.
+
+---
+
+## Sequence Featurizers
+
+### HuggingFaceFeaturizer
+
+Wraps any HuggingFace `PreTrainedTokenizerFast` as a DeepChem featurizer. Useful for tokenizing SMILES, protein sequences, or DNA sequences for transformer-based models.
+
+```python
+dc.feat.HuggingFaceFeaturizer(
+    tokenizer: transformers.PreTrainedTokenizerFast,
+)
+```
+
+<ParamField path="tokenizer" type="transformers.PreTrainedTokenizerFast" required>
+  A pre-loaded HuggingFace tokenizer. Any `PreTrainedTokenizerFast` subclass is supported.
+</ParamField>
+
+**Returns:** Dictionary of tokenizer outputs (e.g., `input_ids`, `attention_mask`).
+
+```python example.py
+from deepchem.feat import HuggingFaceFeaturizer
+from transformers import RobertaTokenizerFast
+
+tokenizer = RobertaTokenizerFast.from_pretrained(
+    "seyonec/PubChem10M_SMILES_BPE_60k"
+)
+featurizer = HuggingFaceFeaturizer(tokenizer=tokenizer)
+result = featurizer.featurize(["CC(=O)C"])
+```
+
+---
+
+### SmilesToSeq
+
+Converts a SMILES string into a character-level integer sequence using a character vocabulary. Useful for RNN or CNN models operating on SMILES directly.
+
+```python
+dc.feat.SmilesToSeq(
+    char_to_idx: Dict[str, int],
+    max_len: int = 250,
+    pad_len: int = 10,
+)
+```
+
+**Returns:** `np.ndarray` of integer token IDs.
+
+---
+
+### SmilesToImage
+
+Converts a SMILES string into a 2D grayscale or RGB image of the molecular structure using RDKit's rendering tools.
+
+```python
+dc.feat.SmilesToImage(
+    img_size: int = 80,
+    res: float = 0.5,
+    max_len: int = 250,
+    img_spec: str = "std",
+)
+```
+
+**Returns:** `np.ndarray` of shape `(img_size, img_size, 1)` for grayscale or `(img_size, img_size, 3)` for RGB.
+
+---
+
+### Biological sequence featurizers
+
+<AccordionGroup>
+  <Accordion title="SAMFeaturizer / BAMFeaturizer / CRAMFeaturizer">
+    Featurize sequencing alignment files (SAM, BAM, CRAM format). Return arrays of per-read base sequences and quality scores. Require `pysam`.
+
+    ```python
+    dc.feat.SAMFeaturizer(max_records: Optional[int] = None)
+    dc.feat.BAMFeaturizer(max_records: Optional[int] = None)
+    dc.feat.CRAMFeaturizer(max_records: Optional[int] = None)
+    ```
+  </Accordion>
+
+  <Accordion title="FASTAFeaturizer">
+    Featurizes FASTA files into arrays of encoded nucleotide or amino acid sequences. Returns one-hot or integer-encoded arrays per sequence record.
+
+    ```python
+    dc.feat.FASTAFeaturizer(max_records: Optional[int] = None)
+    ```
+  </Accordion>
+
+  <Accordion title="RealignerFeaturizer / PileupFeaturizer">
+    Low-level featurizers used by the DeepVariant variant-calling pipeline. `RealignerFeaturizer` performs haplotype-based read realignment; `PileupFeaturizer` produces pileup image tensors from aligned reads.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+Biological sequence featurizers (`SAMFeaturizer`, `BAMFeaturizer`, `CRAMFeaturizer`, `FASTAFeaturizer`) are imported conditionally. If their dependencies (e.g., `pysam`) are not installed, importing `deepchem.feat` will log a warning and skip these classes without raising an error.
+</Note>

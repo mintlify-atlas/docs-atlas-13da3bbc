@@ -1,0 +1,208 @@
+---
+title: "Material Featurizers — dc.feat materials"
+description: "Reference for DeepChem's material featurizers including CGCNNFeaturizer, ElementPropertyFingerprint, SineCoulombMatrix, and LCNNFeaturizer."
+---
+
+Material featurizers in `dc.feat` convert crystal structures and chemical compositions into representations suitable for machine learning models in materials science. Inputs are typically `pymatgen.core.Structure` objects (for structure-based featurizers) or `pymatgen.core.Composition` objects (for composition-based featurizers). All material featurizers require `pymatgen` as a dependency.
+
+<Warning>
+Material featurizers require `pymatgen` and, in several cases, `matminer`:
+
+```bash
+pip install pymatgen matminer
+```
+</Warning>
+
+## ElementPropertyFingerprint
+
+Composition-based featurizer that computes elemental property statistics (min, max, range, mean, standard deviation, mode) from a chemical formula. Features are derived from an elemental property data source such as Magpie, Deml, or matminer. This featurizer is useful when only composition data is available, without 3D crystal coordinates.
+
+```python
+dc.feat.ElementPropertyFingerprint(
+    data_source: str = "matminer",
+)
+```
+
+<ParamField path="data_source" type="str" default='"matminer"'>
+  Source for elemental property data. Accepted values: `"matminer"`, `"magpie"`, `"deml"`.
+</ParamField>
+
+**Input:** `pymatgen.core.Composition` object or a formula string accepted by pymatgen.
+
+**Returns:** `np.ndarray` of shape `(65,)` (with default `"matminer"` source). Values of `NaN` are automatically converted to `0`.
+
+```python example.py
+import deepchem as dc
+import pymatgen as mg
+
+comp = mg.core.Composition("Fe2O3")
+featurizer = dc.feat.ElementPropertyFingerprint()
+features = featurizer.featurize([comp])
+# features[0].shape == (65,)
+```
+
+---
+
+## SineCoulombMatrix
+
+A variant of the Coulomb matrix adapted for periodic crystal structures. The standard inverse-distance term is replaced by the inverse of sin² of the fractional coordinate vector between sites, making it periodic with respect to the crystal lattice.
+
+By default the matrix eigenvalues are returned as a flattened vector, making the representation rotation-invariant and ready for use with standard ML regressors.
+
+```python
+dc.feat.SineCoulombMatrix(
+    max_atoms: int = 100,
+    flatten: bool = True,
+)
+```
+
+<ParamField path="max_atoms" type="int" default="100">
+  Maximum number of atoms across all crystals in the dataset. Used to zero-pad the output to a consistent length.
+</ParamField>
+
+<ParamField path="flatten" type="bool" default="true">
+  If `True`, return sorted eigenvalues of the matrix as a 1D vector of length `max_atoms`. If `False`, return the full `(max_atoms, max_atoms)` padded matrix.
+</ParamField>
+
+**Input:** `pymatgen.core.Structure` object.
+
+**Returns:** `np.ndarray` of shape `(max_atoms,)` when `flatten=True`, or `(max_atoms, max_atoms)` when `flatten=False`.
+
+<Note>
+`SineCoulombMatrix` requires both `pymatgen` and `matminer`.
+</Note>
+
+```python example.py
+import deepchem as dc
+import pymatgen as mg
+
+lattice = mg.core.Lattice.cubic(4.2)
+structure = mg.core.Structure(
+    lattice,
+    ["Cs", "Cl"],
+    [[0, 0, 0], [0.5, 0.5, 0.5]],
+)
+featurizer = dc.feat.SineCoulombMatrix(max_atoms=2)
+features = featurizer.featurize([structure])
+# features[0].shape == (2,)
+```
+
+---
+
+## CGCNNFeaturizer
+
+Crystal Graph Convolutional Neural Network featurizer. Constructs a graph representation of a crystal where atoms are nodes and edges encode neighbor distances via a Gaussian filter. Neighbors are identified by searching within a sphere of given radius around each atom in the unit cell.
+
+```python
+dc.feat.CGCNNFeaturizer(
+    radius: float = 8.0,
+    max_neighbors: int = 12,
+    step: float = 0.2,
+)
+```
+
+<ParamField path="radius" type="float" default="8.0">
+  Radius in Angstroms for the neighbor-search sphere around each atom.
+</ParamField>
+
+<ParamField path="max_neighbors" type="int" default="12">
+  Maximum number of neighbors to include per atom when constructing the graph.
+</ParamField>
+
+<ParamField path="step" type="float" default="0.2">
+  Step size for the Gaussian distance filter applied to neighbor distances when building edge features.
+</ParamField>
+
+**Input:** `pymatgen.core.Structure` object.
+
+**Returns:** `GraphData` object containing atom features and bond features (Gaussian-filtered distances).
+
+<Note>
+On first use, `CGCNNFeaturizer` downloads `atom_init.json` (atomic feature initializations) from the DeepChem S3 bucket. An internet connection is required for this one-time download.
+</Note>
+
+```python example.py
+import deepchem as dc
+import pymatgen as mg
+
+lattice = mg.core.Lattice.cubic(4.2)
+structure = mg.core.Structure(
+    lattice,
+    ["Cs", "Cl"],
+    [[0, 0, 0], [0.5, 0.5, 0.5]],
+)
+featurizer = dc.feat.CGCNNFeaturizer()
+features = featurizer.featurize([structure])
+# type(features[0]) -> deepchem.feat.graph_data.GraphData
+```
+
+---
+
+## LCNNFeaturizer
+
+Lattice Convolutional Neural Network featurizer for surface adsorption tasks. Constructs a regular 2D surface graph with a fixed number of neighbors per site and generates the graph in 6 symmetry-permuted orientations. This is useful when the ordering of neighboring atoms around a site affects property predictions (e.g., adsorption energy on a catalyst surface).
+
+The featurizer requires a primitive cell definition (a `pymatgen.core.Structure` with `"SiteTypes"` site properties designating active (`"A1"`) and spectator (`"S1"`) sites) and per-configuration occupancy data (`"oss"` site property).
+
+```python
+dc.feat.LCNNFeaturizer(
+    primitive_cell: pymatgen.core.Structure,
+    ns: int,
+    na: int,
+    aos: List[str],
+    pbc: List[bool],
+    cutoff: float,
+    n_perm: int = 6,
+)
+```
+
+**Input:** `pymatgen.core.Structure` with `"SiteTypes"` and `"oss"` site properties.
+
+**Returns:** `GraphData` with 6 permuted neighbor lists and atom occupancy one-hot features.
+
+---
+
+## ElemNetFeaturizer
+
+Composition-based featurizer that returns an 86-dimensional vector of fractional elemental compositions. The 86 elements correspond to the vocabulary used in the original ElemNet publication. The vector sums to 1.0.
+
+```python
+dc.feat.ElemNetFeaturizer()
+```
+
+No constructor parameters.
+
+**Input:** `pymatgen.core.Composition` object or a formula string.
+
+**Returns:** `np.ndarray` of shape `(86,)` where `sum(features) == 1.0`.
+
+<Note>
+`ElemNetFeaturizer` requires `pymatgen`. If any element in the composition is outside the 86-element vocabulary, the featurizer returns `None` for that sample.
+</Note>
+
+```python example.py
+import deepchem as dc
+
+featurizer = dc.feat.ElemNetFeaturizer()
+features = featurizer.featurize(["Fe2O3"])
+# features[0].shape == (86,)
+# round(sum(features[0])) == 1
+```
+
+---
+
+## Choosing a material featurizer
+
+<AccordionGroup>
+  <Accordion title="Composition only (no 3D structure)">
+    Use `ElementPropertyFingerprint` (statistics over elemental properties) or `ElemNetFeaturizer` (raw elemental fractions) when only a chemical formula is available.
+  </Accordion>
+
+  <Accordion title="Periodic crystal structure available">
+    Use `SineCoulombMatrix` for a simple fixed-length descriptor, or `CGCNNFeaturizer` for a graph-based representation compatible with graph convolutional models.
+  </Accordion>
+
+  <Accordion title="Surface adsorption / catalyst design">
+    Use `LCNNFeaturizer` when local neighbor ordering around adsorbate sites matters and data is derived from a known primitive surface cell.
+  </Accordion>
+</AccordionGroup>

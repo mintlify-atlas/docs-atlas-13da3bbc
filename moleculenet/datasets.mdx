@@ -1,0 +1,316 @@
+---
+title: "MoleculeNet Dataset Reference"
+description: "Complete reference for all MoleculeNet benchmark datasets including task counts, sizes, and recommended featurizers and splitters."
+---
+
+This page documents each MoleculeNet dataset: its prediction targets, compound count, recommended featurizer and splitter, and the exact loader function signature. All loaders live under `dc.molnet` and follow the same interface—see the [overview](/moleculenet/overview) for a description of the common return values. Every loader accepts `featurizer`, `splitter`, `transformers`, `reload`, `data_dir`, and `save_dir` parameters unless noted otherwise.
+
+## Classification datasets
+
+<AccordionGroup>
+  <Accordion title="Tox21 — 12 tasks, ~8k compounds">
+    The Toxicology in the 21st Century (Tox21) dataset measures qualitative toxicity for 8,014 compounds across 12 nuclear receptor and stress response pathway targets. It is one of the most widely used multi-task classification benchmarks in molecular ML.
+
+    **Tasks:** `NR-AR`, `NR-AR-LBD`, `NR-AhR`, `NR-Aromatase`, `NR-ER`, `NR-ER-LBD`, `NR-PPAR-gamma`, `SR-ARE`, `SR-ATAD5`, `SR-HSE`, `SR-MMP`, `SR-p53`
+
+    **Recommended:** `ScaffoldSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_tox21(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+    # tasks == ['NR-AR', 'NR-AR-LBD', 'NR-AhR', ...]
+    ```
+  </Accordion>
+
+  <Accordion title="BACE — 1 task, ~1.5k compounds">
+    The BACE dataset contains experimental binding results for human beta-secretase 1 (BACE-1) inhibitors. It is available in two variants: binary classification labels (`Class`) and regression labels (`pIC50`). There are 1,513–1,522 compounds in the dataset.
+
+    **Classification task:** `Class` (inhibitor / non-inhibitor)
+
+    **Regression task:** `pIC50` (negative log IC50)
+
+    **Recommended:** `ScaffoldSplitter`
+
+    ```python
+    import deepchem as dc
+
+    # Classification variant
+    tasks, (train, valid, test), transformers = dc.molnet.load_bace_classification(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+
+    # Regression variant
+    tasks, (train, valid, test), transformers = dc.molnet.load_bace_regression(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['normalization'],
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="HIV — 1 task, ~41k compounds">
+    The HIV dataset from the DTP AIDS Antiviral Screen tests over 40,000 compounds for their ability to inhibit HIV replication. Screening results are collapsed into a binary label: confirmed inactive (CI) vs. confirmed active or moderately active (CA/CM).
+
+    **Task:** `HIV_active`
+
+    **Recommended:** `ScaffoldSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_hiv(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+    # tasks == ['HIV_active']
+    ```
+  </Accordion>
+
+  <Accordion title="BBBP — 1 task, ~2k compounds">
+    The Blood-Brain Barrier Penetration (BBBP) dataset contains binary labels for over 2,000 compounds on their ability to penetrate the blood-brain barrier. It is commonly used for CNS drug discovery benchmarks.
+
+    **Task:** `p_np` (penetrating / non-penetrating)
+
+    **Recommended:** `ScaffoldSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_bbbp(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+    # tasks == ['p_np']
+    ```
+  </Accordion>
+
+  <Accordion title="ClinTox — 2 tasks, ~1.5k compounds">
+    The ClinTox dataset compares 1,491 FDA-approved drugs with drugs that failed clinical trials due to toxicity. It provides two binary classification labels per compound.
+
+    **Tasks:** `FDA_APPROVED`, `CT_TOX`
+
+    **Recommended:** `RandomSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_clintox(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+    # tasks == ['FDA_APPROVED', 'CT_TOX']
+    ```
+  </Accordion>
+
+  <Accordion title="SIDER — 27 tasks, ~1.4k compounds">
+    The Side Effect Resource (SIDER) dataset contains adverse drug reaction (ADR) labels for 1,427 approved drugs, grouped into 27 MedDRA system organ classes.
+
+    **Tasks (27):** `Hepatobiliary disorders`, `Metabolism and nutrition disorders`, `Product issues`, `Eye disorders`, `Investigations`, `Musculoskeletal and connective tissue disorders`, `Gastrointestinal disorders`, `Social circumstances`, `Immune system disorders`, `Reproductive system and breast disorders`, `Neoplasms benign, malignant and unspecified (incl cysts and polyps)`, `General disorders and administration site conditions`, `Endocrine disorders`, `Surgical and medical procedures`, `Vascular disorders`, `Blood and lymphatic system disorders`, `Skin and subcutaneous tissue disorders`, `Congenital, familial and genetic disorders`, `Infections and infestations`, `Respiratory, thoracic and mediastinal disorders`, `Psychiatric disorders`, `Renal and urinary disorders`, `Pregnancy, puerperium and perinatal conditions`, `Ear and labyrinth disorders`, `Cardiac disorders`, `Nervous system disorders`, `Injury, poisoning and procedural complications`
+
+    **Recommended:** `RandomSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_sider(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+    print(f"Number of tasks: {len(tasks)}")  # 27
+    ```
+  </Accordion>
+
+  <Accordion title="ToxCast — 617 tasks, ~8.5k compounds">
+    ToxCast is a high-throughput screening dataset from the EPA with results across 617 in vitro bioassays for around 8,500 compounds. It is among the largest multi-task classification benchmarks available in MoleculeNet.
+
+    **Recommended:** `RandomSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_toxcast(
+        featurizer='ecfp',
+        splitter='random',
+        transformers=['balancing'],
+    )
+    print(f"Number of tasks: {len(tasks)}")  # 617
+    ```
+  </Accordion>
+
+  <Accordion title="MUV — 17 tasks, ~93k compounds">
+    The Maximum Unbiased Validation (MUV) dataset is designed specifically for evaluating virtual screening methods. It was selected from PubChem BioAssay using refined nearest-neighbor analysis to minimize bias. It contains around 93,000 compounds and 17 bioassay targets.
+
+    **Tasks:** `MUV-466`, `MUV-548`, `MUV-600`, `MUV-644`, `MUV-652`, `MUV-689`, `MUV-692`, `MUV-712`, `MUV-713`, `MUV-733`, `MUV-737`, `MUV-810`, `MUV-832`, `MUV-846`, `MUV-852`, `MUV-858`, `MUV-859`
+
+    **Recommended:** `ScaffoldSplitter`, `BalancingTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_muv(
+        featurizer='ecfp',
+        splitter='scaffold',
+        transformers=['balancing'],
+    )
+    print(f"Number of tasks: {len(tasks)}")  # 17
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Regression datasets
+
+<AccordionGroup>
+  <Accordion title="ESOL / Delaney — 1 task, ~1.1k compounds">
+    The Delaney (ESOL) dataset contains water solubility measurements for 1,128 compounds. It is one of the most widely used regression benchmarks for molecular property prediction.
+
+    **Task:** `measured log solubility in mols per litre`
+
+    **Recommended:** `ScaffoldSplitter`, `NormalizationTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_delaney(
+        featurizer='graphconv',
+        splitter='scaffold',
+        transformers=['normalization'],
+    )
+    # tasks == ['measured log solubility in mols per litre']
+    ```
+  </Accordion>
+
+  <Accordion title="FreeSolv — 1 task, ~643 compounds">
+    FreeSolv is a collection of experimental and calculated hydration free energies for small molecules in water. The DeepChem version uses experimental values only.
+
+    **Task:** `y` (experimental hydration free energy)
+
+    **Recommended:** `RandomSplitter`, `NormalizationTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_freesolv(
+        featurizer='ecfp',
+        splitter='random',
+        transformers=['normalization'],
+    )
+    # tasks == ['y']
+    ```
+  </Accordion>
+
+  <Accordion title="Lipophilicity — 1 task, ~4.2k compounds">
+    The Lipophilicity dataset, curated from the ChEMBL database, provides experimental octanol/water distribution coefficient (logD at pH 7.4) measurements for 4,200 compounds.
+
+    **Task:** `exp` (measured logD)
+
+    **Recommended:** `ScaffoldSplitter`, `NormalizationTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_lipo(
+        featurizer='graphconv',
+        splitter='scaffold',
+        transformers=['normalization'],
+    )
+    # tasks == ['exp']
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Quantum chemistry datasets
+
+<AccordionGroup>
+  <Accordion title="QM7 — 1 task, 7,165 molecules">
+    QM7 is a subset of GDB-13 containing molecules with up to 7 heavy atoms (C, N, O, S). 3D conformations and atomization energies were computed using DFT (PBE0/tier2 basis set). With sanitization enabled (DeepChem default), the loader returns 6,838 compounds.
+
+    **Task:** `u0_atom` (atomization energy at 0 K, kcal/mol)
+
+    **Default featurizer:** `CoulombMatrix(23)`
+
+    **Recommended:** `RandomStratifiedSplitter`, `NormalizationTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_qm7(
+        featurizer=dc.feat.CoulombMatrix(23),
+        splitter='stratified',
+        transformers=['normalization'],
+    )
+    # tasks == ['u0_atom']
+    ```
+  </Accordion>
+
+  <Accordion title="QM8 — 16 tasks, ~21.8k molecules">
+    QM8 provides electronic spectra and excited state properties for molecules with up to 8 heavy atoms (a subset of GDB-17). Properties are calculated using four quantum chemical methods: RI-CC2, LR-TDPBE0/def2SVP, LR-TDPBE0/def2TZVP, and LR-TDCAM-B3LYP/def2TZVP.
+
+    **Tasks:** `E1-CC2`, `E2-CC2`, `f1-CC2`, `f2-CC2`, `E1-PBE0`, `E2-PBE0`, `f1-PBE0`, `f2-PBE0`, `E1-CAM`, `E2-CAM`, `f1-CAM`, `f2-CAM` (and duplicates for the two PBE0 basis sets)
+
+    **Default featurizer:** `CoulombMatrix(26)`
+
+    **Recommended:** `RandomSplitter`, `NormalizationTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_qm8(
+        featurizer=dc.feat.CoulombMatrix(26),
+        splitter='random',
+        transformers=['normalization'],
+    )
+    print(f"Number of tasks: {len(tasks)}")  # 16
+    ```
+  </Accordion>
+
+  <Accordion title="QM9 — 12 tasks, ~134k molecules">
+    QM9 provides geometric, energetic, electronic, and thermodynamic properties for 134,000 stable organic molecules with up to 9 heavy atoms, computed using B3LYP/6-31G(2df,p) DFT. With sanitization enabled (DeepChem default), the loader returns 132,480 compounds.
+
+    **Tasks:** `mu`, `alpha`, `homo`, `lumo`, `gap`, `r2`, `zpve`, `cv`, `u0`, `u298`, `h298`, `g298`
+
+    **Default featurizer:** `CoulombMatrix(29)`
+
+    **Recommended:** `RandomSplitter`, `NormalizationTransformer`
+
+    ```python
+    import deepchem as dc
+
+    tasks, (train, valid, test), transformers = dc.molnet.load_qm9(
+        featurizer=dc.feat.CoulombMatrix(29),
+        splitter='random',
+        transformers=['normalization'],
+    )
+    # tasks == ['mu', 'alpha', 'homo', 'lumo', 'gap', 'r2',
+    #           'zpve', 'cv', 'u0', 'u298', 'h298', 'g298']
+    ```
+
+    <Note>
+      QM9 is a large dataset (~600 MB SDF file). The first load call will take several minutes for download and featurization.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+## Featurizer compatibility
+
+Most loaders accept any string alias or `Featurizer` object. The table below shows which featurizers work well for each dataset type.
+
+| Dataset type | Works well with |
+|---|---|
+| Classification (SMILES-based) | `ecfp`, `graphconv`, `weave` |
+| Regression (SMILES-based) | `ecfp`, `graphconv`, `weave` |
+| Quantum chemistry (3D geometry) | `CoulombMatrix`, `CircularFingerprint` |
+
+<Tip>
+The `featurizer` parameter accepts either a string alias (e.g., `'ecfp'`) or a fully constructed `Featurizer` object (e.g., `dc.feat.CircularFingerprint(size=2048)`). Use the object form when you need non-default settings.
+</Tip>

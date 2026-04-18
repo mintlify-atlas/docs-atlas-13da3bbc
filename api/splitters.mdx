@@ -1,0 +1,276 @@
+---
+title: "Splitters Reference — dc.splits"
+description: "Reference for DeepChem's Splitter classes including ScaffoldSplitter, RandomSplitter, ButinaSplitter, and k-fold cross-validation."
+---
+
+The `dc.splits` module provides a collection of dataset splitting strategies for machine learning workflows. All splitters share a common base class API that supports train/validation/test splits and k-fold cross-validation. The choice of splitter directly affects how well a benchmark represents a model's ability to generalize to new data.
+
+<Warning>
+  Using `RandomSplitter` for drug discovery tasks can lead to data leakage through molecular similarity. Compounds that share scaffolds may appear in both train and test sets, inflating apparent model performance. Prefer `ScaffoldSplitter` or `ButinaSplitter` for molecular datasets.
+</Warning>
+
+---
+
+## Base Splitter class
+
+All splitter classes in `dc.splits` inherit from `Splitter` and implement the `split()` method. The three shared public methods are available on every concrete splitter.
+
+### train_valid_test_split
+
+```python
+splitter.train_valid_test_split(
+    dataset,
+    train_dir=None,
+    valid_dir=None,
+    test_dir=None,
+    frac_train=0.8,
+    frac_valid=0.1,
+    frac_test=0.1,
+    seed=None,
+    log_every_n=1000,
+)
+```
+
+Returns a `(train, valid, test)` tuple of `dc.data.Dataset` objects.
+
+<ParamField path="dataset" type="dc.data.Dataset" required>
+  The dataset to split.
+</ParamField>
+
+<ParamField path="frac_train" type="float" default="0.8">
+  Fraction of data assigned to the training split.
+</ParamField>
+
+<ParamField path="frac_valid" type="float" default="0.1">
+  Fraction of data assigned to the validation split.
+</ParamField>
+
+<ParamField path="frac_test" type="float" default="0.1">
+  Fraction of data assigned to the test split. Must satisfy `frac_train + frac_valid + frac_test ≈ 1.0`.
+</ParamField>
+
+<ParamField path="seed" type="number">
+  Random seed for reproducibility.
+</ParamField>
+
+<ParamField path="train_dir / valid_dir / test_dir" type="string">
+  Optional filesystem paths for saving split subsets as `DiskDataset` objects. Temporary directories are used when not specified.
+</ParamField>
+
+### train_test_split
+
+```python
+splitter.train_test_split(dataset, train_dir=None, test_dir=None, frac_train=0.8, seed=None)
+```
+
+Convenience wrapper around `train_valid_test_split` that sets `frac_valid=0` and returns a `(train, test)` tuple.
+
+### k_fold_split
+
+```python
+splitter.k_fold_split(dataset, k, directories=None)
+```
+
+Returns a list of `k` tuples of `(train, cv)` dataset pairs for cross-validation. Each fold is held out in turn as the validation set while all other folds form the training set.
+
+---
+
+## RandomSplitter
+
+Assigns datapoints to splits by random permutation. This is the simplest baseline splitter and makes no assumptions about the data.
+
+```python
+import deepchem as dc
+import numpy as np
+
+X, y = np.random.randn(5), np.random.randn(5)
+dataset = dc.data.NumpyDataset(X, y)
+
+splitter = dc.splits.RandomSplitter()
+train, valid, test = splitter.train_valid_test_split(dataset, seed=42)
+```
+
+**Use case:** Non-molecular tabular data, or as a fast baseline to compare against structure-aware splitters.
+
+**Key parameter on `split()`:**
+
+<ParamField path="seed" type="number">
+  Integer random seed passed to `numpy.random.seed`. Set this to ensure reproducible splits across runs.
+</ParamField>
+
+---
+
+## ScaffoldSplitter
+
+Groups molecules by their Bemis-Murcko scaffold (rings, linkers, and connecting atoms), then assigns scaffold groups to splits in decreasing order of group size. Molecules sharing the same scaffold appear in only one split.
+
+This splitter is the standard for drug discovery benchmarks because it tests a model's ability to generalize to structurally novel chemotypes — a requirement that mirrors real-world lead optimization.
+
+<Note>
+  `ScaffoldSplitter` requires RDKit. The dataset's `ids` field must contain valid SMILES strings. Molecules with invalid SMILES are silently skipped and will not appear in any split.
+</Note>
+
+```python
+import deepchem as dc
+import numpy as np
+
+smiles = [
+    "CC(C)Cl", "CCC(C)CO", "CCCCCCCO",
+    "CCCCCCCC(=O)OC", "c3ccc2nc1ccccc1cc2c3",
+    "Nc2cccc3nc1ccccc1cc23", "C1CCCCCC1",
+]
+Xs = np.zeros(len(smiles))
+Ys = np.ones(len(smiles))
+
+dataset = dc.data.DiskDataset.from_numpy(
+    X=Xs, y=Ys, w=np.zeros(len(smiles)), ids=smiles
+)
+
+splitter = dc.splits.ScaffoldSplitter()
+train, test = splitter.train_test_split(dataset)
+```
+
+**Use case:** Drug discovery model evaluation, MoleculeNet benchmark reproduction.
+
+**References:** Bemis & Murcko, *Journal of Medicinal Chemistry*, 1996. DOI: 10.1021/jm9602928.
+
+---
+
+## ButinaSplitter
+
+Clusters molecules by Tanimoto similarity of their Morgan fingerprints using the Taylor-Butina algorithm. Each cluster is assigned as a unit to one split, ensuring that similar molecules remain together and do not straddle the train/test boundary.
+
+<Note>
+  `ButinaSplitter` requires RDKit and has O(N²) runtime. It may be slow for datasets with more than ~10,000 molecules.
+</Note>
+
+```python
+import deepchem as dc
+import numpy as np
+
+smiles = ['C', 'CC', 'CCC', 'CCCC', 'CCCCC']
+dataset = dc.data.DiskDataset.from_numpy(X=np.zeros(len(smiles)), ids=smiles)
+
+splitter = dc.splits.ButinaSplitter(cutoff=0.6)
+train, test = splitter.train_test_split(dataset)
+```
+
+**Constructor parameter:**
+
+<ParamField path="cutoff" type="float" default="0.6">
+  Tanimoto distance threshold. Molecules within this distance are placed in the same cluster. A smaller value produces finer clusters of high similarity; a larger value produces coarser clusters.
+</ParamField>
+
+**Use case:** Generating chemically diverse training sets; clustering-based dataset partitioning.
+
+---
+
+## FingerprintSplitter
+
+Splits molecules to maximize structural dissimilarity between splits using ECFP4 (Morgan radius 2) fingerprints and Ward-style greedy assignment. Molecules least similar to the current group are selected for the opposing split. Runtime scales as O(N²).
+
+<Note>
+  `FingerprintSplitter` requires RDKit. The splitting algorithm is deterministic; the `seed` parameter is accepted but ignored.
+</Note>
+
+```python
+import deepchem as dc
+import numpy as np
+
+smiles = ['C', 'CC', 'CCC', 'CCCC', 'CCCCC']
+dataset = dc.data.DiskDataset.from_numpy(X=np.zeros(len(smiles)), ids=smiles)
+
+splitter = dc.splits.FingerprintSplitter()
+train, test = splitter.train_test_split(dataset)
+```
+
+**Use case:** Generating maximally diverse test sets; stress-testing model extrapolation.
+
+---
+
+## SingletaskStratifiedSplitter
+
+Performs a stratified split on a single task column, ensuring that each split contains a proportional share of the label distribution. Works by sorting samples by label value and then distributing them into splits in a round-robin fashion across groups of 10.
+
+```python
+import deepchem as dc
+from deepchem.data import DiskDataset
+import numpy as np
+
+dataset = DiskDataset.from_numpy(
+    np.ones((100, 10)), np.ones((100, 10))
+)
+splitter = dc.splits.SingletaskStratifiedSplitter(task_number=5)
+train, test = splitter.train_test_split(dataset)
+```
+
+**Constructor parameter:**
+
+<ParamField path="task_number" type="number" default="0">
+  Zero-based index of the task column used to stratify the split.
+</ParamField>
+
+**Use case:** Imbalanced single-task classification; ensuring each split sees both active and inactive examples.
+
+---
+
+## IndexSplitter
+
+Splits the dataset by position: the first `frac_train` fraction becomes training data, the next `frac_valid` fraction becomes validation data, and the remainder becomes test data. No shuffling is applied.
+
+```python
+import deepchem as dc
+import numpy as np
+
+X = np.random.rand(5, 2)
+y = np.random.rand(5)
+dataset = dc.data.NumpyDataset(X, y)
+
+splitter = dc.splits.IndexSplitter()
+train, test = splitter.train_test_split(dataset)
+```
+
+**Use case:** Time-series data or any dataset where order has semantic meaning and future data must not leak into training.
+
+---
+
+## TaskSplitter
+
+Splits across tasks rather than molecules, so different subsets of tasks appear in different splits. Useful when you want to evaluate few-shot or meta-learning models on held-out tasks.
+
+```python
+from deepchem.splits import TaskSplitter
+```
+
+Imported from `deepchem.splits.task_splitter`. See the source at `deepchem/splits/task_splitter.py` for the full API.
+
+---
+
+## Comparing ScaffoldSplitter vs RandomSplitter
+
+The following example illustrates how the two splitters can produce very different test-set difficulty for the same dataset:
+
+```python
+import deepchem as dc
+
+tasks, datasets, transformers = dc.molnet.load_bace_classification()
+train_r, valid_r, test_r = datasets  # default is ScaffoldSplitter
+
+# Re-split with RandomSplitter for comparison
+random_splitter = dc.splits.RandomSplitter()
+train_rand, valid_rand, test_rand = random_splitter.train_valid_test_split(
+    dc.data.DiskDataset.merge([train_r, valid_r, test_r]),
+    seed=0,
+)
+
+model = dc.models.AttentiveFPModel(n_tasks=1, mode='classification')
+metric = dc.metrics.Metric(dc.metrics.roc_auc_score)
+
+model.fit(train_r, nb_epoch=30)
+print("Scaffold split ROC-AUC:", model.evaluate(test_r, [metric], transformers))
+
+model.fit(train_rand, nb_epoch=30)
+print("Random split ROC-AUC:", model.evaluate(test_rand, [metric], transformers))
+# Random split typically reports higher ROC-AUC because structurally
+# similar molecules appear in both train and test.
+```

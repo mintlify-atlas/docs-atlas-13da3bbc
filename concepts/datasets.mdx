@@ -1,0 +1,164 @@
+---
+title: "DeepChem Datasets: NumpyDataset and DiskDataset"
+description: "Learn how DeepChem's Dataset classes store molecules, features, labels, and weights for training and evaluation of deep learning models."
+---
+
+The `Dataset` class is the core data structure in DeepChem. Every model, featurizer, splitter, and transformer operates on `Dataset` objects, which bundle features `X`, labels `y`, sample weights `w`, and molecule identifiers `ids` into a single container. DeepChem provides several concrete subclasses suited for different scales of data.
+
+## The Dataset abstract base class
+
+`dc.data.Dataset` defines the interface that all concrete dataset types implement. You never instantiate it directly; use a subclass instead.
+
+Key properties and methods shared by all datasets:
+
+| Member | Description |
+|---|---|
+| `X` | numpy array of features, shape `(n_samples, ...)` |
+| `y` | numpy array of labels, shape `(n_samples, ...)` |
+| `w` | numpy array of per-sample weights, shape `(n_samples,)` or `(n_samples, n_tasks)` |
+| `ids` | numpy array of molecule identifiers, shape `(n_samples,)` |
+| `get_task_names()` | returns an array of task names/indices |
+| `get_shape()` | returns `(X_shape, y_shape, w_shape, ids_shape)` |
+| `itersamples()` | yields `(X, y, w, id)` tuples one sample at a time |
+| `iterbatches(batch_size, epochs, deterministic, pad_batches)` | yields batches as `(X, y, w, ids)` tuples |
+| `select(indices)` | returns a new dataset containing only the given row indices |
+| `transform(transformer)` | applies a `dc.trans.Transformer` and returns a new dataset |
+| `to_dataframe()` | converts to a `pandas.DataFrame` |
+| `make_pytorch_dataset(epochs, deterministic, batch_size)` | wraps as a `torch.utils.data.IterableDataset` |
+| `make_tf_dataset(batch_size, epochs, deterministic, pad_batches)` | wraps as a `tf.data.Dataset` |
+
+<Note>
+Accessing `.X`, `.y`, `.w`, or `.ids` on a `DiskDataset` loads all shards into memory. For large datasets, prefer `itersamples()` or `iterbatches()`.
+</Note>
+
+## NumpyDataset
+
+`NumpyDataset` holds everything in RAM as numpy arrays. It is the simplest dataset type and is suitable for datasets that fit in memory.
+
+```python
+dc.data.NumpyDataset(
+    X: ArrayLike,
+    y: Optional[ArrayLike] = None,
+    w: Optional[ArrayLike] = None,
+    ids: Optional[ArrayLike] = None,
+    n_tasks: int = 1,
+)
+```
+
+When `y` is `None`, labels are set to zero and weights are set to zero, effectively masking those samples during training. When `ids` is `None`, integer indices `0, 1, …, n_samples-1` are assigned automatically.
+
+**Creating a NumpyDataset from scratch:**
+
+```python
+import numpy as np
+import deepchem as dc
+
+X = np.random.rand(100, 1024)   # 100 samples, 1024 features each
+y = np.random.randint(0, 2, size=(100, 1)).astype(np.float32)  # binary labels
+w = np.ones((100, 1), dtype=np.float32)
+ids = np.array([f"mol_{i}" for i in range(100)])
+
+dataset = dc.data.NumpyDataset(X=X, y=y, w=w, ids=ids, n_tasks=1)
+print(dataset)
+# <NumpyDataset X.shape: (100, 1024), y.shape: (100, 1), w.shape: (100, 1), ...>
+```
+
+**Iterating over samples:**
+
+```python
+for x, y, w, mol_id in dataset.itersamples():
+    print(x.shape, y, w, mol_id)
+    break
+# (1024,) [1.] [1.] mol_0
+```
+
+## DiskDataset
+
+`DiskDataset` stores data as compressed numpy shards on disk, making it suitable for datasets that are too large to fit in RAM. It is the dataset type produced by `CSVLoader`, `SDFLoader`, and related data loaders.
+
+The constructor loads an existing dataset from a directory. To create a new one from numpy arrays, use the static factory method:
+
+```python
+dc.data.DiskDataset.from_numpy(
+    X: np.ndarray,
+    y: Optional[np.ndarray] = None,
+    w: Optional[np.ndarray] = None,
+    ids: Optional[np.ndarray] = None,
+    tasks: Optional[ArrayLike] = None,
+    data_dir: Optional[str] = None,
+) -> DiskDataset
+```
+
+Each shard is stored as a `.npy` file, and a `metadata.csv.gzip` file tracks shard metadata. The `reshard()` method can change the number of samples per shard.
+
+**Loading from a CSV file with CSVLoader:**
+
+```python
+import deepchem as dc
+
+featurizer = dc.feat.CircularFingerprint(size=1024, radius=2)
+loader = dc.data.CSVLoader(
+    tasks=["activity"],
+    feature_field="smiles",
+    featurizer=featurizer,
+)
+dataset = loader.create_dataset("molecules.csv")
+# Returns a DiskDataset stored in a temporary directory
+print(dataset.get_task_names())
+# ['activity']
+```
+
+## ImageDataset
+
+`dc.data.ImageDataset` is a `NumpyDataset` subclass for image-based inputs. It stores raw image arrays and is used by image-based featurizers such as `SmilesToImage`.
+
+## Key dataset operations
+
+<CardGroup cols={2}>
+  <Card title="select()" icon="filter">
+    Creates a new dataset containing only the rows at the specified indices. Works on both `NumpyDataset` and `DiskDataset`.
+
+    ```python
+    subset = dataset.select([0, 5, 10])
+    ```
+  </Card>
+  <Card title="merge()" icon="merge">
+    Static method on `DiskDataset` that concatenates multiple datasets into one.
+
+    ```python
+    merged = dc.data.DiskDataset.merge([train, valid])
+    ```
+  </Card>
+  <Card title="get_task_names()" icon="list">
+    Returns an array of task names. For datasets loaded via `CSVLoader` these are the column names; otherwise they are integer indices.
+
+    ```python
+    print(dataset.get_task_names())
+    ```
+  </Card>
+  <Card title="get_statistics()" icon="chart-bar">
+    Computes mean and standard deviation of features and/or labels without loading the full dataset at once.
+
+    ```python
+    X_means, X_stds, y_means, y_stds = dataset.get_statistics()
+    ```
+  </Card>
+</CardGroup>
+
+## PyTorch DataLoader compatibility
+
+DeepChem datasets expose a `make_pytorch_dataset()` method that returns a `torch.utils.data.IterableDataset`. For index-based access (required by `torch.utils.data.DataLoader` with `shuffle=True`), `DiskDataset` internally uses `deepchem.data.pytorch_datasets._TorchIndexDiskDataset`, which supports `__getitem__` and `__len__`:
+
+```python
+torch_ds = dataset.make_pytorch_dataset(epochs=1, deterministic=True, batch_size=32)
+
+from torch.utils.data import DataLoader
+loader = DataLoader(torch_ds, batch_size=None)  # batching handled by DeepChem
+for X_batch, y_batch, w_batch, ids_batch in loader:
+    print(X_batch.shape)
+    break
+```
+
+<Tip>
+When constructing datasets manually for graph-based models, set `ids` to the SMILES strings of each molecule. Scaffold-based splitters use `dataset.ids` to compute Bemis-Murcko scaffolds.
+</Tip>

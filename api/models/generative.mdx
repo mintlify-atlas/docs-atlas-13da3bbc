@@ -1,0 +1,262 @@
+---
+title: "Generative Models for Molecules — dc.models"
+description: "Reference for DeepChem's MolGAN, GAN/WGAN, SeqToSeq, and reinforcement learning models for de novo molecular generation and optimization."
+---
+
+Generative models in DeepChem enable de novo molecule design and structure optimization. Rather than predicting properties of known molecules, these models learn to sample new molecular structures, either from random noise (GANs), from a latent embedding (SeqToSeq), or through goal-directed search (reinforcement learning). `BasicMolGANModel`, `GAN`/`WGANModel`, and `SeqToSeq` are built on PyTorch. The reinforcement learning algorithms (`PPO`, `A2C`) are built on TensorFlow.
+
+<Warning>
+  `BasicMolGANModel`, `GAN`/`WGANModel`, and `SeqToSeq` require PyTorch (`pip install deepchem[torch]`). Reinforcement learning models (`PPO`, `A2C`) require TensorFlow (`pip install deepchem[tensorflow]`).
+</Warning>
+
+---
+
+## BasicMolGANModel
+
+`dc.models.BasicMolGANModel` generates small molecular graphs using an implicit GAN trained directly on adjacency matrices and node feature tensors. It extends `WGAN` (Wasserstein GAN) for more stable training and uses a reinforcement learning–style reward signal to bias generated molecules toward desirable chemical properties.
+
+**Required featurizer:** `dc.feat.MolGanFeaturizer`
+
+### Parameters
+
+<ParamField path="edges" type="number" default="5">
+  Number of bond type channels in the adjacency tensor, including the zero-bond type. Corresponds to `BondType.ZERO` through `BondType.QUADRUPLE`.
+</ParamField>
+
+<ParamField path="vertices" type="number" default="9">
+  Maximum number of atoms (nodes) in the generated graph. Determines the size of the adjacency matrix.
+</ParamField>
+
+<ParamField path="nodes" type="number" default="5">
+  Number of atom types in the one-hot node feature matrix.
+</ParamField>
+
+<ParamField path="embedding_dim" type="number" default="10">
+  Dimensionality of the noise input vector fed to the generator.
+</ParamField>
+
+<ParamField path="dropout_rate" type="number" default="0.0">
+  Dropout probability applied throughout the generator and discriminator.
+</ParamField>
+
+### Training and generation workflow
+
+<Steps>
+  <Step title="Featurize molecules">
+    Use `dc.feat.MolGanFeaturizer` to convert SMILES into one-hot adjacency tensors and node feature matrices.
+  </Step>
+  <Step title="Build a NumpyDataset">
+    Store adjacency matrices in `X` and node features in `y`. Both must be one-hot encoded.
+  </Step>
+  <Step title="Train with fit_gan">
+    Call `gan.fit_gan(iterbatches(epochs), generator_steps, checkpoint_interval)`. The `iterbatches` function yields dicts mapping `gan.data_inputs` to batched tensors.
+  </Step>
+  <Step title="Sample new molecules">
+    Call `gan.predict_gan_generator(n_samples)` to sample from the generator, then use `feat.defeaturize(generated_data)` to convert graphs back to RDKit molecules.
+  </Step>
+</Steps>
+
+### Example
+
+```python
+import deepchem as dc
+from deepchem.models import BasicMolGANModel as MolGAN
+from deepchem.models.optimizers import ExponentialDecay
+from tensorflow import one_hot
+
+smiles = ['CCC', 'C1=CC=CC=C1', 'CNC']
+feat = dc.feat.MolGanFeaturizer()
+features = feat.featurize(smiles)
+features = list(filter(lambda x: x is not None, features))
+
+gan = MolGAN(learning_rate=ExponentialDecay(0.001, 0.9, 5000))
+dataset = dc.data.NumpyDataset(
+    X=[x.adjacency_matrix for x in features],
+    y=[x.node_features for x in features],
+)
+
+def iterbatches(epochs):
+    for i in range(epochs):
+        for batch in dataset.iterbatches(batch_size=gan.batch_size,
+                                          pad_batches=True):
+            adjacency_tensor = one_hot(batch[0], gan.edges)
+            node_tensor = one_hot(batch[1], gan.nodes)
+            yield {
+                gan.data_inputs[0]: adjacency_tensor,
+                gan.data_inputs[1]: node_tensor,
+            }
+
+gan.fit_gan(iterbatches(8), generator_steps=0.2, checkpoint_interval=5000)
+
+generated_data = gan.predict_gan_generator(1000)
+nmols = feat.defeaturize(generated_data)
+nmols = list(filter(lambda x: x is not None, nmols))
+print(f"{len(nmols)} valid molecules generated")
+```
+
+---
+
+## GAN and WGAN
+
+`dc.models.GAN` is the base class for all DeepChem generative adversarial networks. To create a custom GAN, subclass `GAN` and implement four abstract methods:
+
+| Method | Description |
+|---|---|
+| `get_noise_input_shape()` | Return the shape of the noise input to the generator. |
+| `get_data_input_shapes()` | Return a list of shapes for the real data inputs to the discriminator. |
+| `create_generator()` | Return a `tf.keras.Model` that maps noise → generated data. |
+| `create_discriminator()` | Return a `tf.keras.Model` that maps data → real/fake score. |
+
+`dc.models.WGAN` subclasses `GAN` and replaces the standard cross-entropy discriminator loss with the Wasserstein distance and a gradient penalty, resulting in more stable training and better gradient flow. `BasicMolGANModel` is built on top of `WGAN`.
+
+### Constructor parameters
+
+<ParamField path="n_generators" type="number" default="1">
+  Number of generator networks. Using more than one enables MIX+GAN training (Arora et al., 2017), which reduces mode collapse.
+</ParamField>
+
+<ParamField path="n_discriminators" type="number" default="1">
+  Number of discriminator networks. Works in tandem with `n_generators` for MIX+GAN.
+</ParamField>
+
+```python
+import deepchem as dc
+from deepchem.models import GAN
+import tensorflow as tf
+from tensorflow.keras.layers import Dense
+
+class SimpleGAN(GAN):
+    def get_noise_input_shape(self):
+        return (16,)
+
+    def get_data_input_shapes(self):
+        return [(8,)]
+
+    def create_generator(self):
+        return tf.keras.Sequential([Dense(8, activation='tanh')])
+
+    def create_discriminator(self):
+        return tf.keras.Sequential([Dense(1)])
+```
+
+---
+
+## SeqToSeq
+
+`dc.models.SeqToSeq` implements a GRU-based sequence-to-sequence model for SMILES translation and generation. An encoder maps a variable-length SMILES token sequence to a fixed-length embedding vector; a decoder reconstructs a SMILES string from that embedding. Training as a variational autoencoder allows sampling new molecules by drawing from the Gaussian latent space.
+
+### Parameters
+
+<ParamField path="input_tokens" type="object" required>
+  List of all tokens that may appear in input sequences. A special end-of-sequence sentinel is appended automatically.
+</ParamField>
+
+<ParamField path="output_tokens" type="object" required>
+  List of all tokens that may appear in output sequences. A special end-of-sequence sentinel is appended automatically.
+</ParamField>
+
+<ParamField path="max_output_length" type="number" required>
+  Maximum length of the generated output sequence.
+</ParamField>
+
+<ParamField path="encoder_layers" type="number" default="4">
+  Number of GRU layers in the encoder stack.
+</ParamField>
+
+<ParamField path="decoder_layers" type="number" default="4">
+  Number of GRU layers in the decoder stack.
+</ParamField>
+
+<ParamField path="embedding_dimension" type="number" default="512">
+  Width of the embedding vector and all recurrent layers.
+</ParamField>
+
+<ParamField path="dropout" type="number" default="0.0">
+  Dropout probability during training.
+</ParamField>
+
+<ParamField path="reverse_input" type="boolean" default="true">
+  If `True`, reverse the token order of each input sequence before encoding. This often improves translation of long sequences.
+</ParamField>
+
+<ParamField path="variational" type="boolean" default="false">
+  If `True`, train as a variational autoencoder. Adds Gaussian noise to the encoder output and a KL divergence term to the loss.
+</ParamField>
+
+<ParamField path="annealing_start_step" type="number" default="5000">
+  Training step at which KL cost annealing begins (variational mode only).
+</ParamField>
+
+<ParamField path="annealing_final_step" type="number" default="10000">
+  Training step at which the KL constraint weight reaches its full value.
+</ParamField>
+
+### Example
+
+```python
+import deepchem as dc
+
+# Build the token vocabulary from your SMILES corpus
+smiles_list = ["CCO", "c1ccccc1", "CC(=O)O"]
+tokens = sorted(set(char for s in smiles_list for char in s))
+
+model = dc.models.SeqToSeq(
+    input_tokens=tokens,
+    output_tokens=tokens,
+    max_output_length=40,
+    encoder_layers=2,
+    decoder_layers=2,
+    embedding_dimension=128,
+    dropout=0.1,
+    variational=True,
+    annealing_start_step=1000,
+    annealing_final_step=5000,
+    model_dir='./seq2seq_model',
+)
+```
+
+<Note>
+  When `variational=True`, the model samples from the latent Gaussian distribution at inference time as well. For deterministic encoding, call `model.predict_from_sequences` with `beam_width=1`.
+</Note>
+
+---
+
+## Reinforcement learning (`dc.rl`)
+
+The `dc.rl` module provides reinforcement learning algorithms for goal-directed molecule generation. Instead of learning a distribution over all molecules, RL agents optimize a policy to take sequential actions (for example, adding atoms or bonds) that maximize a chemical reward.
+
+### PPO — Proximal Policy Optimization
+
+`dc.rl.PPO` implements the PPO algorithm (Schulman et al., 2017) for optimizing a molecular generation policy. PPO clips the surrogate objective to prevent destructively large policy updates, making it sample-efficient and stable.
+
+```python
+from deepchem.rl import PPO
+
+# policy and env must be provided by the user
+ppo = PPO(env=env, policy=policy, model_dir='./ppo_mol')
+ppo.fit(5000)
+```
+
+### A2C — Asynchronous Advantage Actor-Critic
+
+`dc.rl.A2C` implements the A2C algorithm, which estimates the advantage function using the difference between the return and a learned value baseline. A3C-style asynchronous workers can be spawned to collect experience in parallel.
+
+```python
+from deepchem.rl import A2C
+
+a2c = A2C(env=env, policy=policy, model_dir='./a2c_mol')
+a2c.fit(5000)
+```
+
+### Environment and Policy
+
+Both algorithms require two objects:
+
+| Class | Role |
+|---|---|
+| `dc.rl.Environment` | Defines the molecule-building MDP: `state_shape`, `n_actions`, `reset()`, `step(action)`. |
+| `dc.rl.Policy` | Wraps a model that maps state → action probabilities and value estimate. Requires TensorFlow for the PPO/A2C implementations. |
+
+<Tip>
+  For an end-to-end example of goal-directed generation with PPO, see the DeepChem tutorials on reinforcement learning for molecule optimization, which demonstrate integration with RDKit reward functions for penalized logP optimization.
+</Tip>

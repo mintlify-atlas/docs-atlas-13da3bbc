@@ -1,122 +1,104 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "DeepChem",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#ec5642"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://icons.duckduckgo.com/ip3/deepchem.io.ico",
+  "logo": {
+    "light": "https://media.brand.dev/ebe4b519-0d2a-4550-88f7-499d5475d7bc.png",
+    "dark": "https://media.brand.dev/ebe4b519-0d2a-4550-88f7-499d5475d7bc.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/deepchem/deepchem"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/deepchem/deepchem"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/datasets",
+              "concepts/featurizers",
+              "concepts/models",
+              "concepts/splitters",
+              "concepts/transformers"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guides/drug-discovery",
+              "guides/materials-science",
+              "guides/quantum-chemistry",
+              "guides/molecular-generation"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "MoleculeNet",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "moleculenet/overview",
+              "moleculenet/datasets"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Data",
             "pages": [
-              "api-reference/introduction"
+              "api/data/datasets",
+              "api/data/loaders"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Featurizers",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/feat/molecular",
+              "api/feat/material",
+              "api/feat/complex"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "api/models/overview",
+              "api/models/graph-neural-networks",
+              "api/models/transformers",
+              "api/models/generative"
+            ]
+          },
+          {
+            "group": "Training & Evaluation",
+            "pages": [
+              "api/metrics",
+              "api/splitters",
+              "api/hyperparameter-tuning"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }
